@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepfake Forensic Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0d1117;
+            color: #e6e6e6;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+
+        .header {
+            text-align: center;
+            padding: 2.5rem;
+            background: {{ cls_color }}10;
+            border-radius: 16px;
+            margin-bottom: 2rem;
+            border: 1px solid {{ cls_color }}33;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.6rem 2.5rem;
+            background: {{ cls_color }};
+            color: white;
+            font-size: 2rem;
+            font-weight: 700;
+            border-radius: 10px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+        .confidence {
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: {{ cls_color }};
+            margin-top: 1rem;
+        }
+        .conf-label { color: #8b949e; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
+
+        .scores {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+        .score-card {
+            background: #161b22;
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            border: 1px solid #30363d;
+            transition: transform 0.2s;
+        }
+        .score-card:hover { transform: translateY(-2px); }
+        .score-value { font-size: 2rem; font-weight: 700; margin: 0.5rem 0; }
+        .score-label { color: #8b949e; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; }
+
+        .section {
+            background: #161b22;
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #30363d;
+        }
+        .section h3 { color: #58a6ff; margin-bottom: 1rem; }
+
+        .boundary-timeline { display: flex; height: 32px; border-radius: 6px; overflow: hidden; }
+        .boundary-seg { height: 100%; cursor: pointer; }
+        .boundary-seg:hover { opacity: 0.8; }
+
+        .legend { display: flex; gap: 1.5rem; margin-top: 0.8rem; }
+        .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 3px; }
+
+        .frames-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+        .frame-card {
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #30363d;
+            transition: transform 0.2s;
+        }
+        .frame-card:hover { transform: scale(1.02); }
+        .frame-card img { width: 100%; display: block; }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.8rem;
+        }
+        .meta-item { color: #8b949e; font-size: 0.85rem; }
+        .meta-item strong { color: #c9d1d9; }
+
+        @media (max-width: 768px) {
+            .scores { grid-template-columns: repeat(2, 1fr); }
+            .meta-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- Header -->
+    <div class="header">
+        <div class="badge">{{ report.classification }}</div>
+        <div class="confidence">{{ "%.1f"|format(report.confidence) }}%</div>
+        <div class="conf-label">Confidence Score</div>
+    </div>
+
+    <!-- Scores -->
+    <div class="scores">
+        <div class="score-card">
+            <div class="score-label">Lip Sync</div>
+            <div class="score-value" style="color: #3498db">{{ "%.1f"|format(report.lip_sync_score * 100) }}%</div>
+        </div>
+        <div class="score-card">
+            <div class="score-label">Identity</div>
+            <div class="score-value" style="color: #9b59b6">{{ "%.1f"|format(report.identity_score * 100) }}%</div>
+        </div>
+        <div class="score-card">
+            <div class="score-label">Temporal</div>
+            <div class="score-value" style="color: #e67e22">{{ "%.1f"|format(report.temporal_score * 100) }}%</div>
+        </div>
+        <div class="score-card">
+            <div class="score-label">AV Sync</div>
+            <div class="score-value" style="color: #1abc9c">{{ "%.1f"|format(report.av_sync_score * 100) }}%</div>
+        </div>
+    </div>
+
+    <!-- Boundaries -->
+    {% if report.boundaries %}
+    <div class="section">
+        <h3>Temporal Forgery Boundaries</h3>
+        <div class="boundary-timeline">
+            {% for b in report.boundaries %}
+            {% set width = ((b.end_time - b.start_time) / report.duration * 100) if report.duration > 0 else 100 %}
+            {% set color = "#2ecc71" if b.tag == "REAL" else ("#e74c3c" if b.tag == "FAKE" else "#f39c12") %}
+            <div class="boundary-seg"
+                 style="width: {{ width }}%; background: {{ color }};"
+                 title="{{ b.tag }}: {{ "%.1f"|format(b.start_time) }}s - {{ "%.1f"|format(b.end_time) }}s">
+            </div>
+            {% endfor %}
+        </div>
+        <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Real</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Fake</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#f39c12"></div> Boundary</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Key Frames -->
+    {% if key_frames %}
+    <div class="section">
+        <h3>Key Heatmap Frames</h3>
+        <div class="frames-grid">
+            {% for frame in key_frames %}
+            <div class="frame-card">
+                <img src="data:image/jpeg;base64,{{ frame.data }}" alt="Key Frame {{ frame.index }}">
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Metadata -->
+    <div class="section">
+        <h3>Analysis Details</h3>
+        <div class="meta-grid">
+            <div class="meta-item"><strong>Video:</strong> {{ report.video_path | basename if report.video_path else 'N/A' }}</div>
+            <div class="meta-item"><strong>Duration:</strong> {{ "%.1f"|format(report.duration) }}s</div>
+            <div class="meta-item"><strong>Frames:</strong> {{ report.num_frames }}</div>
+            <div class="meta-item"><strong>Processing:</strong> {{ "%.1f"|format(report.processing_time) }}s</div>
+            <div class="meta-item"><strong>Model:</strong> v{{ report.model_version }}</div>
+            <div class="meta-item"><strong>Timestamp:</strong> {{ report.timestamp }}</div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
