@@ -28,43 +28,7 @@ dataset = FaceForensicsDataset(
 
 ---
 
-### 2. DFDC (Deepfake Detection Challenge)
-
-- **Paper**: [The Deepfake Detection Challenge](https://arxiv.org/abs/2006.07397)
-- **Access**: Download from https://www.kaggle.com/c/deepfake-detection-challenge
-- **Size**: ~470 GB (full dataset)
-- **Config key**: `path_config.dfdc_root`
-
-```python
-from datasets import DFDCDataset
-
-dataset = DFDCDataset(
-    root_dir="/path/to/dfdc",
-    split="train",
-    num_chunks=10,  # Load only first 10 chunks
-)
-```
-
----
-
-### 3. Celeb-DF v2
-
-- **Paper**: [Celeb-DF: A Large-scale Challenging Dataset for DeepFake Forensics](https://arxiv.org/abs/1909.12962)
-- **Access**: Request at https://github.com/yuezunli/celeb-deepfakeforensics
-- **Config key**: `path_config.celebdf_root`
-
-```python
-from datasets import CelebDFDataset
-
-dataset = CelebDFDataset(
-    root_dir="/path/to/Celeb-DF-v2",
-    split="test",
-)
-```
-
----
-
-### 4. FakeAVCeleb
+### 2. FakeAVCeleb
 
 - **Paper**: [FakeAVCeleb: A Novel Audio-Video Multimodal Deepfake Dataset](https://arxiv.org/abs/2108.05080)
 - **Access**: Request at https://github.com/DASH-Lab/FakeAVCeleb
@@ -83,7 +47,26 @@ dataset = FakeAVCelebDataset(
 
 ---
 
-### 5. ForgeryNet
+### 3. LAV-DF
+
+- **Paper**: LAV-DF: A Large-scale Audio-Visual Deepfake Dataset
+- **Access**: Request from the official LAV-DF project release
+- **Special**: Realistic audiovisual manipulation with temporal forgery segments
+- **Config key**: `path_config.lavdf_root`
+
+```python
+from datasets import LAVDFDataset
+
+dataset = LAVDFDataset(
+    root_dir="/path/to/LAV-DF",
+    split="train",
+)
+# Includes boundary_tags when temporal annotations are available
+```
+
+---
+
+### 4. ForgeryNet
 
 - **Paper**: [ForgeryNet: A Versatile Benchmark for Comprehensive Forgery Analysis](https://arxiv.org/abs/2103.05630)
 - **Access**: Request at https://github.com/yinanhe/ForgeryNet
@@ -110,8 +93,7 @@ Set dataset paths in `config.py`:
 from config import path_config
 
 path_config.faceforensics_root = Path("/path/to/FaceForensics++")
-path_config.dfdc_root = Path("/path/to/dfdc")
-path_config.celebdf_root = Path("/path/to/Celeb-DF-v2")
 path_config.fakeavceleb_root = Path("/path/to/FakeAVCeleb")
+path_config.lavdf_root = Path("/path/to/LAV-DF")
 path_config.forgerynet_root = Path("/path/to/ForgeryNet")
 ```

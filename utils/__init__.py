@@ -13,6 +13,9 @@ from utils.metrics import (
     compute_accuracy,
     compute_f1,
     compute_boundary_f1,
+    compute_temporal_iou,
+    compute_mean_timestamp_error,
+    select_performance_metrics,
 )
 from utils.visualization import (
     plot_score_distribution,
@@ -33,6 +36,9 @@ __all__ = [
     "compute_accuracy",
     "compute_f1",
     "compute_boundary_f1",
+    "compute_temporal_iou",
+    "compute_mean_timestamp_error",
+    "select_performance_metrics",
     "plot_score_distribution",
     "plot_attention_heatmap",
     "plot_boundary_timeline",

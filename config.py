@@ -163,9 +163,8 @@ class PathConfig:
 
     # Dataset roots (to be configured by user)
     faceforensics_root: Optional[Path] = None
-    dfdc_root: Optional[Path] = None
-    celebdf_root: Optional[Path] = None
     fakeavceleb_root: Optional[Path] = None
+    lavdf_root: Optional[Path] = None
     forgerynet_root: Optional[Path] = None
 
     # Report templates

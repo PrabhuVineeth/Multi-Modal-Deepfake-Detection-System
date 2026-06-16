@@ -116,8 +116,8 @@ streamlit run ui/streamlit_app.py
 # Train on FaceForensics++
 python train.py --dataset faceforensics --data-root /path/to/FF++
 
-# Train on DFDC (first 10 chunks)
-python train.py --dataset dfdc --data-root /path/to/dfdc --max-samples 5000
+# Train on LAV-DF
+python train.py --dataset lavdf --data-root /path/to/LAV-DF --max-samples 5000
 
 # Custom settings
 python train.py --dataset faceforensics --data-root /path/to/FF++ \
@@ -137,7 +137,7 @@ python evaluate.py --checkpoint checkpoints/best_model.pth \
 
 # Cross-dataset evaluation
 python evaluate.py --checkpoint checkpoints/best_model.pth \
-  --dataset faceforensics,celebdf,dfdc --data-root /path/to/data
+  --dataset faceforensics,fakeavceleb,lavdf,forgerynet --data-root /path/to/data
 ```
 
 ## Project Structure
@@ -180,9 +180,8 @@ MDDS/
 ├── datasets/                    # Dataset adapters
 │   ├── base_dataset.py          # Abstract base class
 │   ├── faceforensics.py         # FaceForensics++ (FF++)
-│   ├── dfdc.py                  # DFDC
-│   ├── celebdf.py               # Celeb-DF v2
 │   ├── fakeavceleb.py           # FakeAVCeleb
+│   ├── lavdf.py                 # LAV-DF
 │   ├── forgerynet.py            # ForgeryNet (boundary labels)
 │   └── README.md                # Download instructions
 │
@@ -194,7 +193,7 @@ MDDS/
 ├── utils/                       # Utilities
 │   ├── io_utils.py              # File I/O, checkpoints, JSON
 │   ├── visualization.py         # Matplotlib plots
-│   ├── metrics.py               # AUC, EER, ECE, F1
+│   ├── metrics.py               # Accuracy, Precision, Recall, F1, IoU, MTE, ECE
 │   └── logger.py                # Loguru configuration
 │
 └── ui/                          # Streamlit frontend
@@ -207,9 +206,8 @@ MDDS/
 | Dataset | Modalities | Manipulation Types | Boundary Labels |
 |---------|-----------|-------------------|----------------|
 | FaceForensics++ | Video | DeepFakes, Face2Face, FaceSwap, NeuralTextures | ✗ |
-| DFDC | Audio + Video | Various | ✗ |
-| Celeb-DF v2 | Video | Celebrity deepfakes | ✗ |
 | FakeAVCeleb | Audio + Video | Face-swap, lip-sync, both | ✗ |
+| LAV-DF | Audio + Video | Realistic audiovisual deepfakes | ✓ |
 | ForgeryNet | Video | Various | ✓ |
 
 See [`datasets/README.md`](datasets/README.md) for download instructions.

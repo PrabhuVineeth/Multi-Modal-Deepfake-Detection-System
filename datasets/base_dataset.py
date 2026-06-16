@@ -31,6 +31,8 @@ class SampleMetadata:
     manipulation_type: str = ""
     split: str = ""              # "train", "val", "test"
     original_video: str = ""     # Path to original for fake samples
+    forgery_start: Optional[float] = None
+    forgery_end: Optional[float] = None
 
 
 class BaseDeepfakeDataset(Dataset, ABC):
@@ -153,6 +155,8 @@ class BaseDeepfakeDataset(Dataset, ABC):
                 "dataset_name": sample.dataset_name,
                 "manipulation_type": sample.manipulation_type,
                 "split": sample.split,
+                "forgery_start": sample.forgery_start,
+                "forgery_end": sample.forgery_end,
             },
         }
 

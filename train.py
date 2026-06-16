@@ -423,7 +423,7 @@ def main():
     """CLI entry point for training."""
     parser = argparse.ArgumentParser(description="Train Deepfake Forensic Model")
     parser.add_argument("--dataset", type=str, required=True,
-                        help="Dataset name (faceforensics, dfdc, celebdf, fakeavceleb, forgerynet)")
+                        help="Dataset name (faceforensics, fakeavceleb, lavdf, forgerynet)")
     parser.add_argument("--data-root", type=str, required=True,
                         help="Path to dataset root directory")
     parser.add_argument("--resume", type=str, default=None,
@@ -449,15 +449,14 @@ def main():
 
     # Create datasets
     from datasets import (
-        FaceForensicsDataset, DFDCDataset, CelebDFDataset,
-        FakeAVCelebDataset, ForgeryNetDataset,
+        FaceForensicsDataset, FakeAVCelebDataset,
+        LAVDFDataset, ForgeryNetDataset,
     )
 
     dataset_map = {
         "faceforensics": FaceForensicsDataset,
-        "dfdc": DFDCDataset,
-        "celebdf": CelebDFDataset,
         "fakeavceleb": FakeAVCelebDataset,
+        "lavdf": LAVDFDataset,
         "forgerynet": ForgeryNetDataset,
     }
 

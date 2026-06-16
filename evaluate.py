@@ -1,11 +1,8 @@
 """
 Evaluation script for the Deepfake Forensic Detection System.
 
-Computes comprehensive metrics:
-  - AUC-ROC, accuracy, precision, recall, F1, EER
-  - Per-dataset evaluation tables
-  - Calibration analysis (ECE, reliability diagrams)
-  - Boundary detection metrics (frame-level TFBD F1)
+Computes performance metrics:
+  - Accuracy, precision, recall, F1-score, IoU, MTE, ECE
 """
 
 import argparse
@@ -18,14 +15,15 @@ import torch
 from torch.utils.data import DataLoader
 from loguru import logger
 
-from config import ModelConfig, InferenceConfig, get_device, model_config
+from config import ModelConfig, get_device, model_config, preprocess_config
 from models.full_model import DeepfakeForensicModel
 from utils.io_utils import load_checkpoint, save_json
 from utils.logger import setup_logger
 from utils.metrics import (
     compute_all_metrics,
-    compute_boundary_f1,
-    compute_ece,
+    compute_mean_timestamp_error,
+    compute_temporal_iou,
+    select_performance_metrics,
 )
 from utils.visualization import (
     plot_score_distribution,
@@ -79,19 +77,24 @@ def evaluate_dataset(
 
     # Core classification metrics
     if len(np.unique(labels)) > 1:
-        metrics = compute_all_metrics(labels, scores)
+        raw_metrics = compute_all_metrics(labels, scores)
     else:
-        metrics = {
-            "auc_roc": 0.5, "accuracy": 0.0, "f1": 0.0,
-            "precision": 0.0, "recall": 0.0, "eer": 1.0,
+        raw_metrics = {
+            "accuracy": 0.0, "f1": 0.0, "precision": 0.0,
+            "recall": 0.0, "ece": 0.0,
         }
 
-    # Boundary detection metrics
+    iou = 0.0
+    mte = 0.0
     if all_pred_tags and all_true_tags:
         pred_arr = np.array(all_pred_tags)
         true_arr = np.array(all_true_tags)
-        boundary_metrics = compute_boundary_f1(pred_arr, true_arr)
-        metrics["boundary"] = boundary_metrics
+        iou = compute_temporal_iou(pred_arr, true_arr)
+        mte = compute_mean_timestamp_error(
+            pred_arr, true_arr, fps=preprocess_config.target_fps
+        )
+
+    metrics = select_performance_metrics(raw_metrics, iou=iou, mte=mte)
 
     metrics["dataset"] = dataset_name
     metrics["num_samples"] = len(labels)
@@ -143,10 +146,10 @@ def evaluate(
 
         metrics = result["metrics"]
         logger.info(
-            f"  {name}: AUC={metrics.get('auc_roc', 0):.4f} | "
-            f"Acc={metrics.get('accuracy', 0):.4f} | "
-            f"F1={metrics.get('f1', 0):.4f} | "
-            f"EER={metrics.get('eer', 0):.4f}"
+            f"  {name}: Acc={metrics.get('accuracy', 0):.4f} | "
+            f"Precision={metrics.get('precision', 0):.4f} | "
+            f"Recall={metrics.get('recall', 0):.4f} | "
+            f"F1={metrics.get('f1_score', 0):.4f}"
         )
 
         # Generate plots
@@ -183,17 +186,19 @@ def evaluate(
     print("\n" + "=" * 80)
     print("EVALUATION SUMMARY")
     print("=" * 80)
-    print(f"{'Dataset':<20} {'AUC':>8} {'Acc':>8} {'F1':>8} {'EER':>8} {'Samples':>8}")
+    print(f"{'Dataset':<16} {'Acc':>7} {'Prec':>7} {'Recall':>7} {'F1':>7} {'IoU':>7} {'MTE':>7} {'ECE':>7}")
     print("-" * 80)
     for name, result in all_results.items():
         m = result["metrics"]
         print(
             f"{name:<20} "
-            f"{m.get('auc_roc', 0):>8.4f} "
-            f"{m.get('accuracy', 0):>8.4f} "
-            f"{m.get('f1', 0):>8.4f} "
-            f"{m.get('eer', 0):>8.4f} "
-            f"{m.get('num_samples', 0):>8d}"
+            f"{m.get('accuracy', 0):>7.4f} "
+            f"{m.get('precision', 0):>7.4f} "
+            f"{m.get('recall', 0):>7.4f} "
+            f"{m.get('f1_score', 0):>7.4f} "
+            f"{m.get('iou', 0):>7.4f} "
+            f"{m.get('mean_timestamp_error', 0):>7.4f} "
+            f"{m.get('ece', 0):>7.4f}"
         )
     print("=" * 80)
 
@@ -218,15 +223,14 @@ def main():
     args = parser.parse_args()
 
     from datasets import (
-        FaceForensicsDataset, DFDCDataset, CelebDFDataset,
-        FakeAVCelebDataset, ForgeryNetDataset,
+        FaceForensicsDataset, FakeAVCelebDataset,
+        LAVDFDataset, ForgeryNetDataset,
     )
 
     dataset_map = {
         "faceforensics": FaceForensicsDataset,
-        "dfdc": DFDCDataset,
-        "celebdf": CelebDFDataset,
         "fakeavceleb": FakeAVCelebDataset,
+        "lavdf": LAVDFDataset,
         "forgerynet": ForgeryNetDataset,
     }
 

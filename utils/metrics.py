@@ -1,9 +1,4 @@
-"""
-Evaluation metrics for the Deepfake Forensic Detection System.
-
-Includes: AUC-ROC, EER, ECE, accuracy, precision, recall, F1,
-and temporal boundary detection F1.
-"""
+"""Evaluation metrics for the Deepfake Forensic Detection System."""
 
 from typing import Dict, List, Optional, Tuple
 
@@ -174,6 +169,61 @@ def compute_boundary_f1(
         results["boundary_accuracy"] = 0.0
 
     return results
+
+
+def compute_temporal_iou(
+    pred_tags: np.ndarray,
+    true_tags: np.ndarray,
+    fake_tag: int = 1,
+) -> float:
+    """Compute frame-level IoU for predicted vs. true fake regions."""
+    pred_mask = pred_tags == fake_tag
+    true_mask = true_tags == fake_tag
+    union = np.logical_or(pred_mask, true_mask).sum()
+    if union == 0:
+        return 1.0
+    intersection = np.logical_and(pred_mask, true_mask).sum()
+    return float(intersection / union)
+
+
+def compute_mean_timestamp_error(
+    pred_tags: np.ndarray,
+    true_tags: np.ndarray,
+    fps: float,
+    fake_tag: int = 1,
+) -> float:
+    """Compute mean start/end timestamp error in seconds."""
+    def bounds(tags: np.ndarray) -> Optional[Tuple[int, int]]:
+        fake_idx = np.where(tags == fake_tag)[0]
+        if len(fake_idx) == 0:
+            return None
+        return int(fake_idx[0]), int(fake_idx[-1])
+
+    pred_bounds = bounds(pred_tags)
+    true_bounds = bounds(true_tags)
+    if pred_bounds is None or true_bounds is None:
+        return 0.0 if pred_bounds == true_bounds else float(len(true_tags) / max(fps, 1.0))
+
+    start_err = abs(pred_bounds[0] - true_bounds[0]) / max(fps, 1.0)
+    end_err = abs(pred_bounds[1] - true_bounds[1]) / max(fps, 1.0)
+    return float((start_err + end_err) / 2)
+
+
+def select_performance_metrics(
+    metrics: Dict[str, float],
+    iou: float = 0.0,
+    mte: float = 0.0,
+) -> Dict[str, float]:
+    """Return only the seven requested performance metrics."""
+    return {
+        "accuracy": metrics.get("accuracy", 0.0),
+        "precision": metrics.get("precision", 0.0),
+        "recall": metrics.get("recall", 0.0),
+        "f1_score": metrics.get("f1", 0.0),
+        "iou": iou,
+        "mean_timestamp_error": mte,
+        "ece": metrics.get("ece", 0.0),
+    }
 
 
 def compute_all_metrics(

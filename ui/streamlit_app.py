@@ -328,9 +328,8 @@ def render_about_page():
     | Dataset | Type | Modalities |
     |---------|------|-----------|
     | FaceForensics++ | Face manipulation | Video |
-    | DFDC | Various deepfakes | Audio + Video |
-    | Celeb-DF v2 | Celebrity deepfakes | Video |
     | FakeAVCeleb | Audio-visual forgery | Audio + Video |
+    | LAV-DF | Realistic audiovisual deepfakes | Audio + Video + Boundaries |
     | ForgeryNet | Temporal boundaries | Video + Labels |
 
     ### Technology Stack
