@@ -330,7 +330,6 @@ def render_about_page():
     | FaceForensics++ | Face manipulation | Video |
     | FakeAVCeleb | Audio-visual forgery | Audio + Video |
     | LAV-DF | Realistic audiovisual deepfakes | Audio + Video + Boundaries |
-    | ForgeryNet | Temporal boundaries | Video + Labels |
 
     ### Technology Stack
 

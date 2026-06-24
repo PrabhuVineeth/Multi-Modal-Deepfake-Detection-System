@@ -100,14 +100,18 @@ class TemporalForgeryBoundaryDetector(nn.Module):
             f"channels={cnn_channels}, dilations={dilations})"
         )
 
-    def _init_crf(self):
+    def _init_crf(self, device=None):
         """Lazy initialize CRF layer."""
         if self._crf_initialized:
+            if self._crf is not None and device is not None:
+                self._crf.to(device)
             return
 
         try:
             from torchcrf import CRF
             self._crf = CRF(self.num_tags, batch_first=True)
+            if device is not None:
+                self._crf.to(device)
             self._crf_initialized = True
             logger.info("CRF layer initialized (pytorch-crf)")
         except ImportError:
@@ -139,7 +143,7 @@ class TemporalForgeryBoundaryDetector(nn.Module):
               - If inference (no tags): (best_tags, emissions)
                 best_tags [B, T] is the Viterbi-decoded sequence.
         """
-        self._init_crf()
+        self._init_crf(device=features.device)
 
         # CNN expects [B, D, T]
         x = features.transpose(1, 2)         # [B, D, T]

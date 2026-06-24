@@ -68,7 +68,9 @@ class VideoEncoder(nn.Module):
 
         logger.info(f"Loading ViT backbone: {self.model_name}")
         self._processor = ViTImageProcessor.from_pretrained(self.model_name)
-        self._encoder = ViTModel.from_pretrained(self.model_name)
+        # Move encoder to the device of the projection parameters
+        device = next(self.projection.parameters()).device
+        self._encoder = ViTModel.from_pretrained(self.model_name).to(device)
 
         # Freeze embeddings
         for param in self._encoder.embeddings.parameters():
@@ -76,10 +78,13 @@ class VideoEncoder(nn.Module):
 
         # Freeze first N layers
         if self.freeze_layers > 0:
-            for i, layer in enumerate(self._encoder.encoder.layer):
-                if i < self.freeze_layers:
-                    for param in layer.parameters():
-                        param.requires_grad = False
+            layers_container = getattr(self._encoder, "encoder", self._encoder)
+            layer_list = getattr(layers_container, "layer", getattr(layers_container, "layers", None))
+            if layer_list is not None:
+                for i, layer in enumerate(layer_list):
+                    if i < self.freeze_layers:
+                        for param in layer.parameters():
+                            param.requires_grad = False
 
             trainable = sum(
                 p.numel() for p in self._encoder.parameters() if p.requires_grad
@@ -111,7 +116,15 @@ class VideoEncoder(nn.Module):
             B, T, C, H, W = pixel_values.shape
             # Reshape to [B*T, C, H, W] for efficient processing
             flat = pixel_values.reshape(B * T, C, H, W)
-            embeddings = self._encode_single(flat)  # [B*T, projection_dim]
+            
+            # Chunk processing to prevent VRAM overflow/thrashing
+            chunk_size = 32
+            embeddings_list = []
+            for i in range(0, B * T, chunk_size):
+                chunk = flat[i : i + chunk_size]
+                embeddings_list.append(self._encode_single(chunk))
+            
+            embeddings = torch.cat(embeddings_list, dim=0)
             return embeddings.reshape(B, T, -1)  # [B, T, projection_dim]
         else:
             # Single batch of frames: [B, C, H, W]
@@ -127,6 +140,7 @@ class VideoEncoder(nn.Module):
         Returns:
             Embeddings [B, projection_dim] using CLS token.
         """
+        self._load_backbone()
         outputs = self._encoder(
             pixel_values=pixel_values,
             output_hidden_states=False,
@@ -213,7 +227,15 @@ class MouthEncoder(nn.Module):
             B, T, C, H, W = mouth_rois.shape
             flat = mouth_rois.reshape(B * T, C, H, W)
             resized = self.resize(flat)
-            embeddings = self.encoder._encode_single(resized)  # [B*T, proj]
+            
+            # Chunk processing to prevent VRAM overflow/thrashing
+            chunk_size = 32
+            embeddings_list = []
+            for i in range(0, B * T, chunk_size):
+                chunk = resized[i : i + chunk_size]
+                embeddings_list.append(self.encoder._encode_single(chunk))
+            
+            embeddings = torch.cat(embeddings_list, dim=0)
             return embeddings.reshape(B, T, -1)
         else:
             resized = self.resize(mouth_rois)

@@ -61,6 +61,33 @@ pip install -e .
 - FFmpeg (must be on PATH)
 - ~1.3 GB disk space for pre-trained weights (downloaded on first run)
 
+## Dataset Setup
+
+This project uses three datasets:
+
+| Dataset | Modalities | Manipulation Types | Boundary Labels | Source |
+|---------|-----------|-------------------|----------------|--------|
+| FakeAVCeleb | Audio + Video | Face-swap, lip-sync, both | ✗ | Local (downloaded) |
+| FaceForensics++ | Video | DeepFakes, Face2Face, FaceSwap, NeuralTextures | ✗ | Kaggle |
+| LAV-DF | Audio + Video | Realistic audiovisual deepfakes | ✓ | Kaggle |
+
+### Download Datasets from Kaggle
+
+FaceForensics++ and LAV-DF can be downloaded from Kaggle using the helper script:
+
+```bash
+# Download both datasets (requires Kaggle API credentials)
+python download_kaggle_datasets.py
+
+# Download only FaceForensics++
+python download_kaggle_datasets.py --dataset ff++
+
+# Download only LAV-DF
+python download_kaggle_datasets.py --dataset lavdf
+```
+
+See [`datasets/README.md`](datasets/README.md) for detailed instructions.
+
 ## Quick Start
 
 ### CLI Demo
@@ -113,11 +140,14 @@ streamlit run ui/streamlit_app.py
 ## Training
 
 ```bash
+# Train on FakeAVCeleb (locally available)
+python train.py --dataset fakeavceleb --data-root c:\Users\Nitte\Desktop\NNM24AD071\FakeAVCeleb_v1.2
+
 # Train on FaceForensics++
-python train.py --dataset faceforensics --data-root /path/to/FF++
+python train.py --dataset faceforensics --data-root c:\Users\Nitte\Desktop\NNM24AD071\FaceForensics++
 
 # Train on LAV-DF
-python train.py --dataset lavdf --data-root /path/to/LAV-DF --max-samples 5000
+python train.py --dataset lavdf --data-root c:\Users\Nitte\Desktop\NNM24AD071\LAV-DF --max-samples 5000
 
 # Custom settings
 python train.py --dataset faceforensics --data-root /path/to/FF++ \
@@ -137,7 +167,7 @@ python evaluate.py --checkpoint checkpoints/best_model.pth \
 
 # Cross-dataset evaluation
 python evaluate.py --checkpoint checkpoints/best_model.pth \
-  --dataset faceforensics,fakeavceleb,lavdf,forgerynet --data-root /path/to/data
+  --dataset faceforensics,fakeavceleb,lavdf --data-root /path/to/data
 ```
 
 ## Project Structure
@@ -151,6 +181,7 @@ MDDS/
 ├── train.py                     # Training script
 ├── evaluate.py                  # Evaluation script
 ├── demo.py                      # CLI demo
+├── download_kaggle_datasets.py  # Kaggle dataset downloader
 ├── README.md
 │
 ├── preprocessing/               # Video/audio preprocessing
@@ -182,7 +213,6 @@ MDDS/
 │   ├── faceforensics.py         # FaceForensics++ (FF++)
 │   ├── fakeavceleb.py           # FakeAVCeleb
 │   ├── lavdf.py                 # LAV-DF
-│   ├── forgerynet.py            # ForgeryNet (boundary labels)
 │   └── README.md                # Download instructions
 │
 ├── reports/                     # Report generation
@@ -208,7 +238,6 @@ MDDS/
 | FaceForensics++ | Video | DeepFakes, Face2Face, FaceSwap, NeuralTextures | ✗ |
 | FakeAVCeleb | Audio + Video | Face-swap, lip-sync, both | ✗ |
 | LAV-DF | Audio + Video | Realistic audiovisual deepfakes | ✓ |
-| ForgeryNet | Video | Various | ✓ |
 
 See [`datasets/README.md`](datasets/README.md) for download instructions.
 

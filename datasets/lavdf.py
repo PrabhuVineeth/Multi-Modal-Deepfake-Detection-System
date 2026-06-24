@@ -43,9 +43,11 @@ class LAVDFDataset(BaseDeepfakeDataset):
         split: str = "train",
         config: Optional[PreprocessConfig] = None,
         max_samples: Optional[int] = None,
+        use_cache: bool = False,
+        cache_dir: Optional[str] = None,
     ):
         self.boundary_segments: Dict[str, List[Tuple[float, float]]] = {}
-        super().__init__(root_dir, split, config, max_samples)
+        super().__init__(root_dir, split, config, max_samples, use_cache, cache_dir)
 
     def _load_samples(self) -> None:
         anno_base = self.root_dir / "annotations" / self.split

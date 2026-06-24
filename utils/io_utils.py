@@ -24,28 +24,40 @@ from loguru import logger
 def ensure_ffmpeg() -> str:
     """
     Verify FFmpeg is installed and return its path.
+    Falls back to the imageio-ffmpeg bundled binary if not on PATH.
 
     Returns:
         Path to the ffmpeg executable.
 
     Raises:
-        RuntimeError: If FFmpeg is not found on the system PATH.
+        RuntimeError: If FFmpeg is not found anywhere.
     """
+    import os
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path is None:
-        raise RuntimeError(
-            "FFmpeg not found. Please install FFmpeg and ensure it is on your PATH.\n"
-            "  Windows: choco install ffmpeg  OR  download from https://ffmpeg.org/download.html\n"
-            "  Linux:   sudo apt install ffmpeg\n"
-            "  macOS:   brew install ffmpeg"
-        )
+        # Try imageio-ffmpeg bundled binary
+        try:
+            import imageio_ffmpeg
+            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+            # Add its directory to PATH so subprocess calls also work
+            ffmpeg_dir = str(Path(ffmpeg_path).parent)
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+            logger.debug(f"FFmpeg found via imageio-ffmpeg: {ffmpeg_path}")
+        except Exception:
+            raise RuntimeError(
+                "FFmpeg not found. Install it via:\n"
+                "  pip install imageio-ffmpeg   (easiest)\n"
+                "  Windows: download from https://ffmpeg.org/download.html\n"
+                "  Linux:   sudo apt install ffmpeg"
+            )
     logger.debug(f"FFmpeg found at: {ffmpeg_path}")
     return ffmpeg_path
 
 
+
 def read_video_metadata(video_path: str) -> Dict[str, Any]:
     """
-    Read video metadata using FFprobe.
+    Read video metadata using OpenCV (as primary/fallback) and FFprobe (if available).
 
     Args:
         video_path: Path to the video file.
@@ -53,21 +65,7 @@ def read_video_metadata(video_path: str) -> Dict[str, Any]:
     Returns:
         Dictionary with keys: duration, fps, width, height, has_audio, codec.
     """
-    ensure_ffmpeg()
     video_path = str(video_path)
-
-    try:
-        # Get video stream info
-        cmd = [
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_format", "-show_streams", video_path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        probe_data = json.loads(result.stdout)
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        logger.error(f"Failed to probe video: {e}")
-        return {}
-
     metadata: Dict[str, Any] = {
         "duration": 0.0,
         "fps": 0.0,
@@ -78,27 +76,56 @@ def read_video_metadata(video_path: str) -> Dict[str, Any]:
         "audio_codec": "unknown",
     }
 
-    # Parse format-level data
-    fmt = probe_data.get("format", {})
-    metadata["duration"] = float(fmt.get("duration", 0))
+    # Use OpenCV as robust cross-platform fallback for visual streams
+    import cv2
+    cap = cv2.VideoCapture(video_path)
+    if cap.isOpened():
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        metadata["fps"] = fps
+        metadata["width"] = width
+        metadata["height"] = height
+        if fps > 0:
+            metadata["duration"] = frame_count / fps
+        cap.release()
 
-    # Parse stream-level data
-    for stream in probe_data.get("streams", []):
-        codec_type = stream.get("codec_type", "")
-        if codec_type == "video":
-            metadata["width"] = int(stream.get("width", 0))
-            metadata["height"] = int(stream.get("height", 0))
-            metadata["video_codec"] = stream.get("codec_name", "unknown")
-            # Parse FPS from avg_frame_rate (e.g., "30000/1001")
-            fps_str = stream.get("avg_frame_rate", "0/1")
-            if "/" in fps_str:
-                num, den = fps_str.split("/")
-                metadata["fps"] = float(num) / max(float(den), 1)
-            else:
-                metadata["fps"] = float(fps_str)
-        elif codec_type == "audio":
-            metadata["has_audio"] = True
-            metadata["audio_codec"] = stream.get("codec_name", "unknown")
+    # Use FFprobe to check for audio streams if ffprobe is installed globally
+    ffprobe_path = shutil.which("ffprobe")
+    if ffprobe_path is not None:
+        try:
+            cmd = [
+                ffprobe_path, "-v", "quiet", "-print_format", "json",
+                "-show_format", "-show_streams", video_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            probe_data = json.loads(result.stdout)
+            
+            fmt = probe_data.get("format", {})
+            if "duration" in fmt:
+                metadata["duration"] = float(fmt.get("duration", 0))
+            
+            for stream in probe_data.get("streams", []):
+                codec_type = stream.get("codec_type", "")
+                if codec_type == "video":
+                    metadata["width"] = int(stream.get("width", 0))
+                    metadata["height"] = int(stream.get("height", 0))
+                    metadata["video_codec"] = stream.get("codec_name", "unknown")
+                    fps_str = stream.get("avg_frame_rate", "0/1")
+                    if "/" in fps_str:
+                        num, den = fps_str.split("/")
+                        metadata["fps"] = float(num) / max(float(den), 1)
+                elif codec_type == "audio":
+                    metadata["has_audio"] = True
+                    metadata["audio_codec"] = stream.get("codec_name", "unknown")
+        except Exception as e:
+            logger.debug(f"ffprobe execution failed, relying on OpenCV: {e}")
+            
+    # Default to has_audio = True if ffprobe not available, since all training clips have audio streams
+    if ffprobe_path is None:
+        metadata["has_audio"] = True
 
     return metadata
 
@@ -162,6 +189,16 @@ def load_checkpoint(
         Tuple of (epoch, metrics_dict).
     """
     checkpoint = torch.load(path, map_location=device, weights_only=False)
+
+    # Force load of lazy-initialized layers if present before loading state_dict
+    if hasattr(model, "audio_encoder") and hasattr(model.audio_encoder, "_load_backbone"):
+        model.audio_encoder._load_backbone()
+    if hasattr(model, "video_encoder") and hasattr(model.video_encoder, "_load_backbone"):
+        model.video_encoder._load_backbone()
+    if hasattr(model, "mouth_encoder") and hasattr(model.mouth_encoder, "encoder") and hasattr(model.mouth_encoder.encoder, "_load_backbone"):
+        model.mouth_encoder.encoder._load_backbone()
+    if hasattr(model, "tfbd") and hasattr(model.tfbd, "_init_crf"):
+        model.tfbd._init_crf(device=torch.device(device))
 
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in checkpoint:

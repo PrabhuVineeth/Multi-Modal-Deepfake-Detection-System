@@ -54,7 +54,7 @@ class AudioExtractor:
         try:
             # FFmpeg command: extract audio, convert to target format
             cmd = [
-                "ffmpeg", "-y",           # Overwrite output
+                self._ffmpeg, "-y",       # Overwrite output
                 "-i", video_path,         # Input video
                 "-vn",                    # No video
                 "-acodec", "pcm_s16le",   # 16-bit PCM WAV

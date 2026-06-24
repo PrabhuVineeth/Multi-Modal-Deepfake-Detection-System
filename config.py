@@ -59,12 +59,12 @@ class PreprocessConfig:
 
     # Video
     target_fps: int = 25
-    max_frames: int = 300               # Max frames to process per video (~12s at 25fps)
+    max_frames: int = 16                # Max frames to process per video (~0.6s at 25fps)
     frame_size: Tuple[int, int] = (720, 1280)  # H, W for initial resize
 
     # Face detection
     face_crop_size: Tuple[int, int] = (224, 224)
-    face_detection_threshold: float = 0.8
+    face_detection_threshold: float = 0.5
     face_detection_backend: str = "retinaface"  # "retinaface" or "mtcnn"
     max_faces: int = 1                  # Max faces to track per video
     face_padding: float = 0.3           # Padding ratio around detected face
@@ -91,7 +91,7 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
     warmup_steps: int = 500
-    max_epochs: int = 50
+    max_epochs: int = 5
     batch_size: int = 4
     gradient_accumulation_steps: int = 4
     max_grad_norm: float = 1.0
@@ -113,7 +113,7 @@ class TrainingConfig:
     use_amp: bool = True
 
     # Early stopping
-    patience: int = 7
+    patience: int = 3
     min_delta: float = 1e-4
 
     # Data
@@ -161,11 +161,10 @@ class PathConfig:
     heatmap_dir: Path = field(default_factory=lambda: Path(__file__).parent / "output" / "heatmaps")
     debug_dir: Path = field(default_factory=lambda: Path(__file__).parent / "output" / "debug")
 
-    # Dataset roots (to be configured by user)
-    faceforensics_root: Optional[Path] = None
-    fakeavceleb_root: Optional[Path] = None
-    lavdf_root: Optional[Path] = None
-    forgerynet_root: Optional[Path] = None
+    # Dataset roots (pre-configured/defaults)
+    faceforensics_root: Optional[Path] = field(default_factory=lambda: Path("c:/Users/Nitte/Desktop/NNM24AD071/FaceForensics++_C23") if Path("c:/Users/Nitte/Desktop/NNM24AD071/FaceForensics++_C23").exists() else Path(__file__).parent.parent / "FaceForensics++_C23")
+    fakeavceleb_root: Optional[Path] = field(default_factory=lambda: Path("c:/Users/Nitte/Desktop/NNM24AD071/FakeAVCeleb_v1.2") if Path("c:/Users/Nitte/Desktop/NNM24AD071/FakeAVCeleb_v1.2").exists() else Path(__file__).parent.parent / "FakeAVCeleb_v1.2")
+    lavdf_root: Optional[Path] = field(default_factory=lambda: Path("c:/Users/Nitte/Desktop/NNM24AD071/LAV-DF") if Path("c:/Users/Nitte/Desktop/NNM24AD071/LAV-DF").exists() else Path(__file__).parent.parent / "LAV-DF")
 
     # Report templates
     template_dir: Path = field(default_factory=lambda: Path(__file__).parent / "reports" / "templates")

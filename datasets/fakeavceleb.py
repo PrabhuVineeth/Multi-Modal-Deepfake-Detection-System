@@ -46,9 +46,11 @@ class FakeAVCelebDataset(BaseDeepfakeDataset):
         forgery_types: Optional[list] = None,
         config: Optional[PreprocessConfig] = None,
         max_samples: Optional[int] = None,
+        use_cache: bool = False,
+        cache_dir: Optional[str] = None,
     ):
         self.forgery_types = forgery_types  # Filter by forgery category
-        super().__init__(root_dir, split, config, max_samples)
+        super().__init__(root_dir, split, config, max_samples, use_cache, cache_dir)
 
     def _load_samples(self) -> None:
         """Parse FakeAVCeleb directory structure."""
@@ -64,11 +66,25 @@ class FakeAVCelebDataset(BaseDeepfakeDataset):
         with open(meta_file, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                video_path = self.root_dir / row.get("path", "")
+                # The CSV has an unnamed column ('') with the full relative path
+                # e.g. "FakeAVCeleb/RealVideo-RealAudio/African/men/id00076"
+                # and 'path' contains just the filename e.g. "00109.mp4"
+                full_rel = row.get("") or row.get("full_path", "")
+                filename = row.get("path", "")
+
+                if full_rel:
+                    # Strip leading "FakeAVCeleb/" prefix if present
+                    full_rel = full_rel.replace("FakeAVCeleb/", "", 1)
+                    video_path = self.root_dir / full_rel / filename
+                else:
+                    # Fallback: type-based subdirectory + filename
+                    type_dir = row.get("type", "")
+                    video_path = self.root_dir / type_dir / filename
+
                 if not video_path.exists():
                     continue
 
-                category = row.get("category", "")
+                category = row.get("type", row.get("category", ""))
                 manip_type, label = self.FORGERY_CATEGORIES.get(
                     category, ("unknown", 1)
                 )
@@ -83,6 +99,7 @@ class FakeAVCelebDataset(BaseDeepfakeDataset):
                     manipulation_type=manip_type,
                     split=self.split,
                 ))
+
 
     def _load_from_dirs(self) -> None:
         """Load samples by scanning forgery category directories."""

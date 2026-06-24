@@ -70,7 +70,9 @@ class AudioEncoder(nn.Module):
 
         logger.info(f"Loading Wav2Vec2 backbone: {self.model_name}")
         self._processor = Wav2Vec2Processor.from_pretrained(self.model_name)
-        self._encoder = Wav2Vec2Model.from_pretrained(self.model_name)
+        # Move encoder to the device of the projection parameters
+        device = next(self.projection.parameters()).device
+        self._encoder = Wav2Vec2Model.from_pretrained(self.model_name).to(device)
 
         # Freeze feature extractor (CNN) layers — always frozen
         self._encoder.feature_extractor._freeze_parameters()

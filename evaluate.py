@@ -224,14 +224,13 @@ def main():
 
     from datasets import (
         FaceForensicsDataset, FakeAVCelebDataset,
-        LAVDFDataset, ForgeryNetDataset,
+        LAVDFDataset,
     )
 
     dataset_map = {
         "faceforensics": FaceForensicsDataset,
         "fakeavceleb": FakeAVCelebDataset,
         "lavdf": LAVDFDataset,
-        "forgerynet": ForgeryNetDataset,
     }
 
     datasets = {}

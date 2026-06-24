@@ -66,6 +66,15 @@ class FaceDetector:
 
         if self.backend == "retinaface":
             try:
+                import os
+                import sys
+                import torch
+                # On Windows, explicitly add PyTorch's bundled DLL library to the path so ONNX Runtime can find CUDA/cuDNN
+                if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+                    torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), "lib")
+                    if os.path.exists(torch_lib_dir):
+                        os.add_dll_directory(torch_lib_dir)
+
                 from insightface.app import FaceAnalysis
 
                 self._detector = FaceAnalysis(

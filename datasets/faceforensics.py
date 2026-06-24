@@ -52,6 +52,8 @@ class FaceForensicsDataset(BaseDeepfakeDataset):
         manipulation_types: Optional[list] = None,
         config: Optional[PreprocessConfig] = None,
         max_samples: Optional[int] = None,
+        use_cache: bool = False,
+        cache_dir: Optional[str] = None,
     ):
         """
         Args:
@@ -61,42 +63,42 @@ class FaceForensicsDataset(BaseDeepfakeDataset):
             manipulation_types: Which types to include (None = all).
             config: Preprocessing config.
             max_samples: Max samples.
+            use_cache: Whether to use pre-cached preprocessed data.
+            cache_dir: Directory for cached preprocessed data.
         """
         self.compression = compression
         self.manipulation_types = manipulation_types or self.MANIPULATION_TYPES
-        super().__init__(root_dir, split, config, max_samples)
+        super().__init__(root_dir, split, config, max_samples, use_cache, cache_dir)
 
     def _load_samples(self) -> None:
-        """Parse FF++ directory structure."""
-        # Load split file
-        split_file = self.root_dir / "splits" / f"{self.split}.json"
-        split_ids = set()
-        if split_file.exists():
-            import json
-            with open(split_file) as f:
-                pairs = json.load(f)
-                for pair in pairs:
-                    split_ids.update(str(x) for x in pair)
-
-        # Real videos
-        real_dir = (
+        """Parse FF++ directory structure — supports standard and flat Kaggle layout."""
+        # Detect layout
+        standard_real = (
             self.root_dir / "original_sequences" / "youtube"
             / self.compression / "videos"
         )
-        if real_dir.exists():
-            for video_path in sorted(real_dir.glob("*.mp4")):
-                vid_id = video_path.stem
-                if split_ids and vid_id not in split_ids:
-                    continue
-                self.samples.append(SampleMetadata(
-                    video_path=str(video_path),
-                    label=0,
-                    dataset_name="faceforensics",
-                    manipulation_type="original",
-                    split=self.split,
-                ))
+        flat_real = self.root_dir / "original"
 
-        # Fake videos
+        if standard_real.exists():
+            self._load_standard(standard_real)
+        elif flat_real.exists():
+            self._load_flat()
+        else:
+            logger.warning(f"FF++ directory structure not recognised at {self.root_dir}")
+
+    def _load_standard(self, real_dir: Path) -> None:
+        """Load from official FF++ hierarchy: original_sequences/youtube/c23/videos/."""
+        split_ids = self._read_split_ids()
+
+        for video_path in sorted(real_dir.glob("*.mp4")):
+            if split_ids and video_path.stem not in split_ids:
+                continue
+            self.samples.append(SampleMetadata(
+                video_path=str(video_path), label=0,
+                dataset_name="faceforensics", manipulation_type="original",
+                split=self.split,
+            ))
+
         for manip_type in self.manipulation_types:
             fake_dir = (
                 self.root_dir / "manipulated_sequences" / manip_type
@@ -105,15 +107,59 @@ class FaceForensicsDataset(BaseDeepfakeDataset):
             if not fake_dir.exists():
                 logger.warning(f"FF++ directory not found: {fake_dir}")
                 continue
-
             for video_path in sorted(fake_dir.glob("*.mp4")):
                 vid_id = video_path.stem.split("_")[0]
                 if split_ids and vid_id not in split_ids:
                     continue
                 self.samples.append(SampleMetadata(
-                    video_path=str(video_path),
-                    label=1,
-                    dataset_name="faceforensics",
-                    manipulation_type=manip_type,
+                    video_path=str(video_path), label=1,
+                    dataset_name="faceforensics", manipulation_type=manip_type,
                     split=self.split,
                 ))
+
+    def _load_flat(self) -> None:
+        """Load from flat Kaggle layout: original/, Deepfakes/, Face2Face/, etc. under root."""
+        # Real videos
+        real_dir = self.root_dir / "original"
+        for video_path in sorted(real_dir.rglob("*.mp4")):
+            self.samples.append(SampleMetadata(
+                video_path=str(video_path), label=0,
+                dataset_name="faceforensics", manipulation_type="original",
+                split=self.split,
+            ))
+
+        # Fake videos — map folder names to manipulation types
+        folder_map = {
+            "Deepfakes": "Deepfakes",
+            "Face2Face": "Face2Face",
+            "FaceSwap": "FaceSwap",
+            "NeuralTextures": "NeuralTextures",
+            "FaceShifter": "FaceShifter",
+            "DeepFakeDetection": "DeepFakeDetection",
+        }
+        for folder, manip_type in folder_map.items():
+            if manip_type not in self.manipulation_types and manip_type not in ["FaceShifter", "DeepFakeDetection"]:
+                continue
+            fake_dir = self.root_dir / folder
+            if not fake_dir.exists():
+                continue
+            for video_path in sorted(fake_dir.rglob("*.mp4")):
+                self.samples.append(SampleMetadata(
+                    video_path=str(video_path), label=1,
+                    dataset_name="faceforensics", manipulation_type=manip_type,
+                    split=self.split,
+                ))
+
+    def _read_split_ids(self) -> set:
+        """Read train/val/test split IDs from splits JSON if present."""
+        split_file = self.root_dir / "splits" / f"{self.split}.json"
+        if not split_file.exists():
+            return set()
+        import json
+        with open(split_file) as f:
+            pairs = json.load(f)
+        ids = set()
+        for pair in pairs:
+            ids.update(str(x) for x in pair)
+        return ids
+

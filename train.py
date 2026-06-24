@@ -40,6 +40,19 @@ from utils.logger import setup_logger
 from utils.metrics import compute_all_metrics
 
 
+def forensic_collate_fn(batch):
+    """Custom collate: stack tensors normally, keep metadata as list (avoids None collation errors)."""
+    from torch.utils.data._utils.collate import default_collate
+    keys = batch[0].keys()
+    result = {}
+    for k in keys:
+        if k == "metadata":
+            result[k] = [d[k] for d in batch]  # list of dicts, not stacked
+        else:
+            result[k] = default_collate([d[k] for d in batch])
+    return result
+
+
 def create_optimizer(
     model: nn.Module, config: TrainingConfig
 ) -> torch.optim.Optimizer:
@@ -172,7 +185,7 @@ def train_one_epoch(
 
         # Forward pass
         if config.use_amp and device.type == "cuda":
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 output = model(
                     audio, faces, mouths,
                     boundary_tags=boundary_tags,
@@ -257,8 +270,13 @@ def validate(
         mouths = batch["mouth_rois"].to(device)
         labels = batch["label"].to(device)
 
-        output = model(audio, faces, mouths)
-        _, loss_dict = compute_multitask_loss(output, labels, None, config)
+        if config.use_amp and device.type == "cuda":
+            with torch.amp.autocast('cuda'):
+                output = model(audio, faces, mouths)
+                _, loss_dict = compute_multitask_loss(output, labels, None, config)
+        else:
+            output = model(audio, faces, mouths)
+            _, loss_dict = compute_multitask_loss(output, labels, None, config)
 
         for k, v in loss_dict.items():
             epoch_losses[k] = epoch_losses.get(k, 0) + v
@@ -276,11 +294,29 @@ def validate(
     # Compute metrics
     labels_arr = np.array(all_labels)
     scores_arr = np.array(all_scores)
+    predictions_arr = (scores_arr >= 0.5).astype(int)
+
+    # Logging diagnostic stats
+    real_count = int((labels_arr == 0).sum())
+    fake_count = int((labels_arr == 1).sum())
+    mean_confidence = float(scores_arr.mean())
+    
+    logger.info("=== Validation Diagnostics ===")
+    logger.info(f"  Total validation samples: {len(labels_arr)}")
+    logger.info(f"  Real (class 0) count    : {real_count}")
+    logger.info(f"  Fake (class 1) count    : {fake_count}")
+    logger.info(f"  Mean predicted prob     : {mean_confidence:.4f}")
+    logger.info(f"  First 20 labels         : {labels_arr[:20].tolist()}")
+    logger.info(f"  First 20 predictions    : {predictions_arr[:20].tolist()}")
+    logger.info(f"  First 20 probabilities  : {[f'{x:.4f}' for x in scores_arr[:20]]}")
+    logger.info("==============================")
 
     if len(np.unique(labels_arr)) > 1:
         metrics = compute_all_metrics(labels_arr, scores_arr)
     else:
-        metrics = {"auc_roc": 0.5, "accuracy": 0.0, "f1": 0.0}
+        # Fallback for single-class validation split (e.g. tiny max_samples)
+        acc_val = float((predictions_arr == labels_arr).mean())
+        metrics = {"auc_roc": 0.5, "accuracy": acc_val, "f1": 0.0}
 
     return epoch_losses, metrics
 
@@ -292,6 +328,8 @@ def train(
     train_cfg: Optional[TrainingConfig] = None,
     path_cfg: Optional[PathConfig] = None,
     resume_from: Optional[str] = None,
+    use_cache: bool = False,
+    cache_dir: Optional[str] = None,
 ):
     """
     Main training loop.
@@ -333,27 +371,56 @@ def train(
     start_epoch = 0
     best_auc = 0.0
     if resume_from:
-        start_epoch, metrics = load_checkpoint(
+        loaded_epoch, metrics = load_checkpoint(
             resume_from, model, optimizer, scheduler, device=str(device)
         )
+        start_epoch = loaded_epoch + 1
         best_auc = metrics.get("auc_roc", 0.0)
         logger.info(f"Resumed from epoch {start_epoch}, best AUC={best_auc:.4f}")
+
+    # Enable caching in datasets if requested
+    for dataset in [train_dataset, val_dataset]:
+        if hasattr(dataset, "datasets"):  # ConcatDataset
+            for sub_ds in dataset.datasets:
+                sub_ds.use_cache = use_cache
+                sub_ds.cache_dir = Path(cache_dir) if cache_dir else None
+        else:
+            dataset.use_cache = use_cache
+            dataset.cache_dir = Path(cache_dir) if cache_dir else None
+
+    # Resolve DataLoader workers and optimization settings
+    import sys
+    num_workers = train_cfg.num_workers
+    
+    # Decord CPU frames extraction is not process-safe on Windows without cache
+    if sys.platform.startswith("win") and not use_cache:
+        logger.warning("Windows detected without caching. Forcing num_workers=0 to prevent multiprocessing crashes.")
+        num_workers = 0
+
+    # Build loader kwargs dynamically
+    loader_kwargs = {
+        "batch_size": train_cfg.batch_size,
+        "pin_memory": train_cfg.pin_memory,
+        "collate_fn": forensic_collate_fn,
+    }
+    if num_workers > 0:
+        loader_kwargs["num_workers"] = num_workers
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 2
+    else:
+        loader_kwargs["num_workers"] = 0
 
     # Data loaders
     train_loader = DataLoader(
         train_dataset,
-        batch_size=train_cfg.batch_size,
         shuffle=True,
-        num_workers=train_cfg.num_workers,
-        pin_memory=train_cfg.pin_memory,
         drop_last=True,
+        **loader_kwargs
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=train_cfg.batch_size * 2,
         shuffle=False,
-        num_workers=train_cfg.num_workers,
-        pin_memory=train_cfg.pin_memory,
+        **loader_kwargs
     )
 
     # Training loop
@@ -423,7 +490,7 @@ def main():
     """CLI entry point for training."""
     parser = argparse.ArgumentParser(description="Train Deepfake Forensic Model")
     parser.add_argument("--dataset", type=str, required=True,
-                        help="Dataset name (faceforensics, fakeavceleb, lavdf, forgerynet)")
+                        help="Dataset name (faceforensics, fakeavceleb, lavdf)")
     parser.add_argument("--data-root", type=str, required=True,
                         help="Path to dataset root directory")
     parser.add_argument("--resume", type=str, default=None,
@@ -436,6 +503,12 @@ def main():
                         help="Override learning rate")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Max samples per split (for testing)")
+    parser.add_argument("--use-cache", action="store_true", default=True,
+                        help="Use cached preprocessed tensors (default: True)")
+    parser.add_argument("--no-cache", dest="use_cache", action="store_false",
+                        help="Disable caching and run on-the-fly preprocessing")
+    parser.add_argument("--cache-dir", default="output/cache",
+                        help="Directory where preprocessed tensors are saved/loaded")
     args = parser.parse_args()
 
     # Override config if specified
@@ -450,14 +523,13 @@ def main():
     # Create datasets
     from datasets import (
         FaceForensicsDataset, FakeAVCelebDataset,
-        LAVDFDataset, ForgeryNetDataset,
+        LAVDFDataset,
     )
 
     dataset_map = {
         "faceforensics": FaceForensicsDataset,
         "fakeavceleb": FakeAVCelebDataset,
         "lavdf": LAVDFDataset,
-        "forgerynet": ForgeryNetDataset,
     }
 
     DatasetClass = dataset_map.get(args.dataset)
@@ -465,13 +537,18 @@ def main():
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
     train_dataset = DatasetClass(
-        args.data_root, split="train", max_samples=args.max_samples
+        args.data_root, split="train", max_samples=args.max_samples,
+        use_cache=args.use_cache, cache_dir=args.cache_dir
     )
     val_dataset = DatasetClass(
-        args.data_root, split="val", max_samples=args.max_samples
+        args.data_root, split="val", max_samples=args.max_samples,
+        use_cache=args.use_cache, cache_dir=args.cache_dir
     )
 
-    train(train_dataset, val_dataset, train_cfg=t_cfg, resume_from=args.resume)
+    train(
+        train_dataset, val_dataset, train_cfg=t_cfg, resume_from=args.resume,
+        use_cache=args.use_cache, cache_dir=args.cache_dir
+    )
 
 
 if __name__ == "__main__":

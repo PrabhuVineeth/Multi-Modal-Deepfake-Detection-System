@@ -1,0 +1,20 @@
+# Pycache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Checkpoints
+checkpoints/
+
+# System and logs
+*.log
+stdout.log
+stderr.log
+.vscode/
+.idea/
+
+# Large dataset outputs/caches
+output/
+output/cache/
+output/test_manifest_cache_v2/
