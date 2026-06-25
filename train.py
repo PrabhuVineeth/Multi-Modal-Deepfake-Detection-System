@@ -13,9 +13,21 @@ Supports:
 """
 
 import argparse
+import sys
 import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 import numpy as np
 import torch
@@ -100,6 +112,7 @@ def compute_multitask_loss(
     labels: torch.Tensor,
     boundary_tags: Optional[torch.Tensor],
     config: TrainingConfig,
+    pos_weight: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute the multi-task loss.
@@ -109,6 +122,7 @@ def compute_multitask_loss(
         labels: Ground truth labels [B] (0=REAL, 1=FAKE).
         boundary_tags: Optional per-frame boundary tags [B, T].
         config: Training configuration with loss weights.
+        pos_weight: Configurable weight for positive class.
 
     Returns:
         Tuple of (total_loss, loss_dict).
@@ -116,8 +130,11 @@ def compute_multitask_loss(
     losses = {}
 
     # 1. Classification loss (BCE with logits)
+    logits = output.logits.squeeze(-1)
+    # Clamp logits for numerical stability (prevents NaN gradients under large pos_weight / AMP)
+    logits = torch.clamp(logits, min=-20.0, max=20.0)
     cls_loss = F.binary_cross_entropy_with_logits(
-        output.logits.squeeze(-1), labels.float()
+        logits, labels.float(), pos_weight=pos_weight
     )
     losses["cls"] = cls_loss.item()
 
@@ -155,6 +172,18 @@ def compute_multitask_loss(
     )
     losses["total"] = total.item()
 
+    if torch.isnan(total):
+        logger.error(
+            f"NaN Loss detected! "
+            f"logits_has_nan={torch.isnan(logits).any().item()}, "
+            f"cls={cls_loss.item():.4f}, "
+            f"lip={lip_loss.item():.4f}, "
+            f"id={id_loss.item():.4f}, "
+            f"temp={temp_loss.item():.4f}, "
+            f"sync={sync_loss.item():.4f}, "
+            f"boundary={boundary_loss.item():.4f}"
+        )
+
     return total, losses
 
 
@@ -166,6 +195,7 @@ def train_one_epoch(
     config: TrainingConfig,
     epoch: int,
     scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    pos_weight: Optional[torch.Tensor] = None,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -191,7 +221,7 @@ def train_one_epoch(
                     boundary_tags=boundary_tags,
                 )
                 loss, loss_dict = compute_multitask_loss(
-                    output, labels, boundary_tags, config
+                    output, labels, boundary_tags, config, pos_weight
                 )
                 loss = loss / config.gradient_accumulation_steps
         else:
@@ -200,7 +230,7 @@ def train_one_epoch(
                 boundary_tags=boundary_tags,
             )
             loss, loss_dict = compute_multitask_loss(
-                output, labels, boundary_tags, config
+                output, labels, boundary_tags, config, pos_weight
             )
             loss = loss / config.gradient_accumulation_steps
 
@@ -251,6 +281,7 @@ def validate(
     dataloader: DataLoader,
     device: torch.device,
     config: TrainingConfig,
+    pos_weight: Optional[torch.Tensor] = None,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     Validate the model.
@@ -261,6 +292,7 @@ def validate(
     model.eval()
     all_labels = []
     all_scores = []
+    all_logits = []
     epoch_losses = {}
     num_batches = 0
 
@@ -273,19 +305,21 @@ def validate(
         if config.use_amp and device.type == "cuda":
             with torch.amp.autocast('cuda'):
                 output = model(audio, faces, mouths)
-                _, loss_dict = compute_multitask_loss(output, labels, None, config)
+                _, loss_dict = compute_multitask_loss(output, labels, None, config, pos_weight)
         else:
             output = model(audio, faces, mouths)
-            _, loss_dict = compute_multitask_loss(output, labels, None, config)
+            _, loss_dict = compute_multitask_loss(output, labels, None, config, pos_weight)
 
         for k, v in loss_dict.items():
             epoch_losses[k] = epoch_losses.get(k, 0) + v
         num_batches += 1
 
         # Collect predictions
-        probs = torch.sigmoid(output.logits.squeeze(-1))
+        logits_val = output.logits.squeeze(-1)
+        probs = torch.sigmoid(logits_val)
         all_labels.extend(labels.cpu().numpy())
         all_scores.extend(probs.cpu().numpy())
+        all_logits.extend(logits_val.reshape(-1).cpu().numpy().tolist())
 
     # Average losses
     for k in epoch_losses:
@@ -299,17 +333,27 @@ def validate(
     # Logging diagnostic stats
     real_count = int((labels_arr == 0).sum())
     fake_count = int((labels_arr == 1).sum())
+    pred_real_count = int((predictions_arr == 0).sum())
+    pred_fake_count = int((predictions_arr == 1).sum())
     mean_confidence = float(scores_arr.mean())
     
     logger.info("=== Validation Diagnostics ===")
     logger.info(f"  Total validation samples: {len(labels_arr)}")
     logger.info(f"  Real (class 0) count    : {real_count}")
     logger.info(f"  Fake (class 1) count    : {fake_count}")
+    logger.info(f"  Predicted Real count    : {pred_real_count}")
+    logger.info(f"  Predicted Fake count    : {pred_fake_count}")
     logger.info(f"  Mean predicted prob     : {mean_confidence:.4f}")
     logger.info(f"  First 20 labels         : {labels_arr[:20].tolist()}")
     logger.info(f"  First 20 predictions    : {predictions_arr[:20].tolist()}")
     logger.info(f"  First 20 probabilities  : {[f'{x:.4f}' for x in scores_arr[:20]]}")
     logger.info("==============================")
+
+    # 5. Log prediction distribution in validate()
+    pred_labels = (torch.sigmoid(torch.tensor(all_logits)) > 0.5).int().tolist()
+    n_pred_real = pred_labels.count(0)
+    n_pred_fake = pred_labels.count(1)
+    print(f"  Prediction distribution → Real: {n_pred_real} | Fake: {n_pred_fake}")
 
     if len(np.unique(labels_arr)) > 1:
         metrics = compute_all_metrics(labels_arr, scores_arr)
@@ -344,6 +388,8 @@ def train(
     """
     model_cfg = model_cfg or model_config
     train_cfg = train_cfg or training_config
+    # Force use_amp=False for stable float32 training under highly weighted BCE loss
+    train_cfg.use_amp = False
     path_cfg = path_cfg or path_config
 
     # Setup
@@ -410,10 +456,43 @@ def train(
     else:
         loader_kwargs["num_workers"] = 0
 
-    # Data loaders
+    # Extract labels from train_dataset
+    if hasattr(train_dataset, "datasets"):
+        train_labels = []
+        for sub_ds in train_dataset.datasets:
+            train_labels.extend([s.label for s in sub_ds.samples])
+    else:
+        train_labels = [s.label for s in train_dataset.samples]
+        
+    n_real = sum(1 for l in train_labels if l == 0)
+    n_fake = sum(1 for l in train_labels if l == 1)
+    
+    # 2. Add --pos-weight-mode CLI argument logic
+    if train_cfg.pos_weight_mode == "fake_over_real" and n_real > 0:
+        pos_weight = torch.tensor([n_fake / n_real], dtype=torch.float32).to(device)
+    else:
+        pos_weight = None
+
+    # 3. Add WeightedRandomSampler to training DataLoader
+    from torch.utils.data import WeightedRandomSampler
+    
+    n_real_safe = max(n_real, 1)
+    n_fake_safe = max(n_fake, 1)
+    class_counts = [n_real_safe, n_fake_safe]
+    sample_weights = [1.0 / class_counts[int(l)] for l in train_labels]
+    sample_weights = torch.tensor(sample_weights, dtype=torch.float32)
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+    
+    logger.info(f"Auto-computed training split label counts: real={n_real}, fake={n_fake}")
+    if pos_weight is not None:
+        logger.info(f"Using pos_weight for BCEWithLogitsLoss: {pos_weight.item():.4f}")
+    else:
+        logger.info("Not using pos_weight for BCEWithLogitsLoss (None)")
+
+    # Data loaders (use sampler instead of shuffle=True)
     train_loader = DataLoader(
         train_dataset,
-        shuffle=True,
+        sampler=sampler,
         drop_last=True,
         **loader_kwargs
     )
@@ -432,11 +511,11 @@ def train(
         # Train
         train_losses = train_one_epoch(
             model, train_loader, optimizer, device,
-            train_cfg, epoch, scaler
+            train_cfg, epoch, scaler, pos_weight=pos_weight
         )
 
         # Validate
-        val_losses, val_metrics = validate(model, val_loader, device, train_cfg)
+        val_losses, val_metrics = validate(model, val_loader, device, train_cfg, pos_weight=pos_weight)
 
         # Step scheduler
         scheduler.step()
@@ -463,16 +542,21 @@ def train(
             checkpoint_path, scheduler
         )
 
-        # Best model tracking
-        if current_auc > best_auc + train_cfg.min_delta:
-            best_auc = current_auc
+        # Best model tracking based on validation AUC
+        val_auc = current_auc
+        if val_auc > best_auc:
+            best_auc = val_auc
             patience_counter = 0
             best_path = str(path_cfg.checkpoint_dir / "best_model.pth")
-            save_checkpoint(
-                model, optimizer, epoch,
-                {**val_losses, **val_metrics},
-                best_path, scheduler
-            )
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+                "metrics": {**val_losses, **val_metrics},
+            }
+            torch.save(checkpoint, best_path)
+            print(f"  Best model saved (AUC: {best_auc:.4f})")
             logger.info(f"★ New best model: AUC={best_auc:.4f}")
         else:
             patience_counter += 1
@@ -501,6 +585,8 @@ def main():
                         help="Override batch size")
     parser.add_argument("--lr", type=float, default=None,
                         help="Override learning rate")
+    parser.add_argument("--grad-accum", type=int, default=None,
+                        help="Override gradient accumulation steps")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Max samples per split (for testing)")
     parser.add_argument("--use-cache", action="store_true", default=True,
@@ -509,7 +595,22 @@ def main():
                         help="Disable caching and run on-the-fly preprocessing")
     parser.add_argument("--cache-dir", default="output/cache",
                         help="Directory where preprocessed tensors are saved/loaded")
+    parser.add_argument("--pos-weight-mode", type=str, default="fake_over_real",
+                        choices=["fake_over_real", "none"],
+                        help="Strategy for BCE pos_weight to handle class imbalance")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducibility")
     args = parser.parse_args()
+
+    # Set random seed if specified
+    if args.seed is not None:
+        import random
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     # Override config if specified
     t_cfg = TrainingConfig()
@@ -519,6 +620,10 @@ def main():
         t_cfg.batch_size = args.batch_size
     if args.lr:
         t_cfg.learning_rate = args.lr
+    if args.grad_accum:
+        t_cfg.gradient_accumulation_steps = args.grad_accum
+    if args.pos_weight_mode:
+        t_cfg.pos_weight_mode = args.pos_weight_mode
 
     # Create datasets
     from datasets import (
