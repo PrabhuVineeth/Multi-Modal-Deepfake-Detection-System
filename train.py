@@ -112,7 +112,7 @@ def compute_multitask_loss(
     labels: torch.Tensor,
     boundary_tags: Optional[torch.Tensor],
     config: TrainingConfig,
-    pos_weight: Optional[torch.Tensor] = None,
+    weight: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute the multi-task loss.
@@ -122,7 +122,7 @@ def compute_multitask_loss(
         labels: Ground truth labels [B] (0=REAL, 1=FAKE).
         boundary_tags: Optional per-frame boundary tags [B, T].
         config: Training configuration with loss weights.
-        pos_weight: Configurable weight for positive class.
+        weight: Configurable weight for per-sample/class scaling.
 
     Returns:
         Tuple of (total_loss, loss_dict).
@@ -134,7 +134,7 @@ def compute_multitask_loss(
     # Clamp logits for numerical stability (prevents NaN gradients under large pos_weight / AMP)
     logits = torch.clamp(logits, min=-20.0, max=20.0)
     cls_loss = F.binary_cross_entropy_with_logits(
-        logits, labels.float(), pos_weight=pos_weight
+        logits, labels.float(), weight=weight
     )
     losses["cls"] = cls_loss.item()
 
@@ -195,7 +195,8 @@ def train_one_epoch(
     config: TrainingConfig,
     epoch: int,
     scaler: Optional[torch.cuda.amp.GradScaler] = None,
-    pos_weight: Optional[torch.Tensor] = None,
+    real_weight: Optional[torch.Tensor] = None,
+    fake_weight: Optional[torch.Tensor] = None,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -213,6 +214,11 @@ def train_one_epoch(
         if boundary_tags is not None:
             boundary_tags = boundary_tags.to(device)
 
+        if real_weight is not None and fake_weight is not None:
+            sample_weights = torch.where(labels == 0, real_weight, fake_weight)
+        else:
+            sample_weights = None
+
         # Forward pass
         if config.use_amp and device.type == "cuda":
             with torch.amp.autocast('cuda'):
@@ -221,7 +227,7 @@ def train_one_epoch(
                     boundary_tags=boundary_tags,
                 )
                 loss, loss_dict = compute_multitask_loss(
-                    output, labels, boundary_tags, config, pos_weight
+                    output, labels, boundary_tags, config, weight=sample_weights
                 )
                 loss = loss / config.gradient_accumulation_steps
         else:
@@ -230,7 +236,7 @@ def train_one_epoch(
                 boundary_tags=boundary_tags,
             )
             loss, loss_dict = compute_multitask_loss(
-                output, labels, boundary_tags, config, pos_weight
+                output, labels, boundary_tags, config, weight=sample_weights
             )
             loss = loss / config.gradient_accumulation_steps
 
@@ -281,7 +287,6 @@ def validate(
     dataloader: DataLoader,
     device: torch.device,
     config: TrainingConfig,
-    pos_weight: Optional[torch.Tensor] = None,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     Validate the model.
@@ -305,10 +310,10 @@ def validate(
         if config.use_amp and device.type == "cuda":
             with torch.amp.autocast('cuda'):
                 output = model(audio, faces, mouths)
-                _, loss_dict = compute_multitask_loss(output, labels, None, config, pos_weight)
+                _, loss_dict = compute_multitask_loss(output, labels, None, config, weight=None)
         else:
             output = model(audio, faces, mouths)
-            _, loss_dict = compute_multitask_loss(output, labels, None, config, pos_weight)
+            _, loss_dict = compute_multitask_loss(output, labels, None, config, weight=None)
 
         for k, v in loss_dict.items():
             epoch_losses[k] = epoch_losses.get(k, 0) + v
@@ -467,27 +472,23 @@ def train(
     n_real = sum(1 for l in train_labels if l == 0)
     n_fake = sum(1 for l in train_labels if l == 1)
     
-    # 2. Add --pos-weight-mode CLI argument logic
-    if train_cfg.pos_weight_mode == "fake_over_real" and n_real > 0:
-        pos_weight = torch.tensor([n_fake / n_real], dtype=torch.float32).to(device)
-    else:
-        pos_weight = None
-
-    # 3. Add WeightedRandomSampler to training DataLoader
-    from torch.utils.data import WeightedRandomSampler
-    
     n_real_safe = max(n_real, 1)
     n_fake_safe = max(n_fake, 1)
+    
+    # Compute per-sample loss weights
+    real_weight = torch.tensor(n_fake_safe / n_real_safe, dtype=torch.float32).to(device)
+    fake_weight = torch.tensor(1.0, dtype=torch.float32).to(device)
+    logger.info(f"Using per-sample loss weights - Real class: {real_weight.item():.4f}, Fake class: 1.0000")
+
+    # Add WeightedRandomSampler to training DataLoader
+    from torch.utils.data import WeightedRandomSampler
+    
     class_counts = [n_real_safe, n_fake_safe]
-    sample_weights = [1.0 / class_counts[int(l)] for l in train_labels]
-    sample_weights = torch.tensor(sample_weights, dtype=torch.float32)
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+    sampler_weights = [1.0 / class_counts[int(l)] for l in train_labels]
+    sampler_weights = torch.tensor(sampler_weights, dtype=torch.float32)
+    sampler = WeightedRandomSampler(sampler_weights, num_samples=len(sampler_weights), replacement=True)
     
     logger.info(f"Auto-computed training split label counts: real={n_real}, fake={n_fake}")
-    if pos_weight is not None:
-        logger.info(f"Using pos_weight for BCEWithLogitsLoss: {pos_weight.item():.4f}")
-    else:
-        logger.info("Not using pos_weight for BCEWithLogitsLoss (None)")
 
     # Data loaders (use sampler instead of shuffle=True)
     train_loader = DataLoader(
@@ -511,11 +512,12 @@ def train(
         # Train
         train_losses = train_one_epoch(
             model, train_loader, optimizer, device,
-            train_cfg, epoch, scaler, pos_weight=pos_weight
+            train_cfg, epoch, scaler,
+            real_weight=real_weight, fake_weight=fake_weight
         )
 
         # Validate
-        val_losses, val_metrics = validate(model, val_loader, device, train_cfg, pos_weight=pos_weight)
+        val_losses, val_metrics = validate(model, val_loader, device, train_cfg)
 
         # Step scheduler
         scheduler.step()
@@ -595,9 +597,6 @@ def main():
                         help="Disable caching and run on-the-fly preprocessing")
     parser.add_argument("--cache-dir", default="output/cache",
                         help="Directory where preprocessed tensors are saved/loaded")
-    parser.add_argument("--pos-weight-mode", type=str, default="fake_over_real",
-                        choices=["fake_over_real", "none"],
-                        help="Strategy for BCE pos_weight to handle class imbalance")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility")
     args = parser.parse_args()
@@ -622,8 +621,6 @@ def main():
         t_cfg.learning_rate = args.lr
     if args.grad_accum:
         t_cfg.gradient_accumulation_steps = args.grad_accum
-    if args.pos_weight_mode:
-        t_cfg.pos_weight_mode = args.pos_weight_mode
 
     # Create datasets
     from datasets import (

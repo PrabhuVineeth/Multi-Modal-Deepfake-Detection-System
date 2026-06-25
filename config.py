@@ -112,9 +112,6 @@ class TrainingConfig:
     # Mixed precision
     use_amp: bool = True
 
-    # Loss weighting mode: "fake_over_real", "real_over_fake", or "none"
-    pos_weight_mode: str = "fake_over_real"
-
     # Early stopping
     patience: int = 3
     min_delta: float = 1e-4

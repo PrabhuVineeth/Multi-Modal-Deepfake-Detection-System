@@ -347,7 +347,10 @@ class BaseDeepfakeDataset(Dataset, ABC):
         manifest = self._load_manifest()
         sample_info = manifest.get("samples", {}).get(key)
         if not sample_info:
-            return None
+            if cache_path.exists() and cache_path.stat().st_size > 10000:
+                sample_info = {"file_size": cache_path.stat().st_size}
+            else:
+                return None
             
         if cache_path.exists():
             try:
