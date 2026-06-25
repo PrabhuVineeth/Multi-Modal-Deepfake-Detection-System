@@ -90,6 +90,23 @@ See [`datasets/README.md`](datasets/README.md) for detailed instructions.
 
 ## Quick Start
 
+## Preprocessing (Required)
+
+Before training, preprocess videos to cache:
+
+```bash
+# Preprocess FakeAVCeleb (1.5–2 hours on RTX 4070)
+python preprocess_offline.py \
+  --cache-dir output/cache_full \
+  --dataset-root c:\Users\Nitte\Desktop\NNM24AD071\FakeAVCeleb_v1.2 \
+  --use-gpu
+
+# Verify cache completion
+ls output/cache_full/ | wc -l  # Should show ~21,566 files
+```
+
+**Without preprocessing, training will be 100× slower (6 hours/epoch instead of 15 min).**
+
 ### CLI Demo
 ```bash
 # Analyze a single video

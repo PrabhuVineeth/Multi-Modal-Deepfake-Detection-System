@@ -29,11 +29,12 @@ if hasattr(sys.stderr, 'reconfigure'):
     except Exception:
         pass
 
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from loguru import logger
 
 from config import (
@@ -89,22 +90,23 @@ def create_optimizer(
     )
 
 
-def create_scheduler(
-    optimizer: torch.optim.Optimizer, config: TrainingConfig
-):
-    """Create learning rate scheduler."""
-    if config.scheduler == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=config.max_epochs, eta_min=1e-7
-        )
-    elif config.scheduler == "step":
-        return torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=config.step_size,
-            gamma=config.step_gamma,
-        )
-    else:
-        raise ValueError(f"Unknown scheduler: {config.scheduler}")
+def get_scheduler(optimizer, config, total_steps, args):
+    """Create scheduler with CLI override support."""
+    scheduler_type = args.scheduler if args and args.scheduler else config.scheduler
+    warmup_steps = args.warmup_steps if args and args.warmup_steps is not None else config.warmup_steps
+    
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return (step + 1) / max(1, warmup_steps)  # Linear warmup 0→1
+        if scheduler_type == "none":
+            return 1.0  # Constant LR
+        elif scheduler_type == "cosine":
+            progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+            return max(0.01, 0.5 * (1 + math.cos(math.pi * progress)))
+        else:
+            return 1.0
+    
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def compute_multitask_loss(
@@ -128,7 +130,6 @@ def compute_multitask_loss(
         Tuple of (total_loss, loss_dict).
     """
     losses = {}
-
     # 1. Classification loss (BCE with logits)
     logits = output.logits.squeeze(-1)
     # Clamp logits for numerical stability (prevents NaN gradients under large pos_weight / AMP)
@@ -136,30 +137,24 @@ def compute_multitask_loss(
     cls_loss = F.binary_cross_entropy_with_logits(
         logits, labels.float(), weight=weight
     )
-    losses["cls"] = cls_loss.item()
 
     # 2. Lip sync loss
     lip_target = labels.float().unsqueeze(-1)  # FAKE=1 → high score
     lip_loss = F.mse_loss(output.lip_sync_score, lip_target)
-    losses["lip_sync"] = lip_loss.item()
 
     # 3. Identity loss
     id_loss = F.mse_loss(output.identity_score, lip_target)
-    losses["identity"] = id_loss.item()
 
     # 4. Temporal loss
     temp_loss = F.mse_loss(output.temporal_score, lip_target)
-    losses["temporal"] = temp_loss.item()
 
     # 5. AV sync loss
     sync_loss = F.mse_loss(output.av_sync_score, lip_target)
-    losses["av_sync"] = sync_loss.item()
 
     # 6. Boundary loss (TFBD CRF)
     boundary_loss = torch.tensor(0.0, device=labels.device)
     if output.boundary_loss is not None:
         boundary_loss = output.boundary_loss
-    losses["boundary"] = boundary_loss.item()
 
     # Weighted sum
     total = (
@@ -170,8 +165,17 @@ def compute_multitask_loss(
         + config.lambda_sync * sync_loss
         + config.lambda_boundary * boundary_loss
     )
-    losses["total"] = total.item()
-
+    
+    losses = {
+        "cls": cls_loss.item(),
+        "lip": lip_loss.item(),
+        "id": id_loss.item(),
+        "temp": temp_loss.item(),
+        "sync": sync_loss.item(),
+        "boundary": boundary_loss.item(),
+        "total": total.item()
+    }
+    
     if torch.isnan(total):
         logger.error(
             f"NaN Loss detected! "
@@ -197,6 +201,7 @@ def train_one_epoch(
     scaler: Optional[torch.cuda.amp.GradScaler] = None,
     real_weight: Optional[torch.Tensor] = None,
     fake_weight: Optional[torch.Tensor] = None,
+    scheduler = None,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -262,17 +267,21 @@ def train_one_epoch(
                 optimizer.step()
             optimizer.zero_grad()
 
+        # Step scheduler
+        if scheduler is not None:
+            scheduler.step()
+
+        # Log learning rate at batch 1 and every 25 batches
+        if batch_idx == 0 or (batch_idx + 1) % 25 == 0:
+            logger.info(f"  Batch {batch_idx+1}/{len(dataloader)} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+
         # Accumulate losses
         for k, v in loss_dict.items():
             epoch_losses[k] = epoch_losses.get(k, 0) + v
         num_batches += 1
 
-        if (batch_idx + 1) % 20 == 0:
-            avg_loss = epoch_losses["total"] / num_batches
-            logger.info(
-                f"Epoch {epoch} | Batch {batch_idx+1}/{len(dataloader)} | "
-                f"Loss: {avg_loss:.4f}"
-            )
+        if (batch_idx + 1) % 25 == 0:
+            logger.info(f"  Loss breakdown: cls={loss_dict['cls']:.4f} | lip={loss_dict['lip']:.4f} | id={loss_dict['id']:.4f} | temp={loss_dict['temp']:.4f} | sync={loss_dict['sync']:.4f} | boundary={loss_dict['boundary']:.4f}")
 
     # Average losses
     for k in epoch_losses:
@@ -379,6 +388,7 @@ def train(
     resume_from: Optional[str] = None,
     use_cache: bool = False,
     cache_dir: Optional[str] = None,
+    args = None,
 ):
     """
     Main training loop.
@@ -405,39 +415,20 @@ def train(
     logger.info(f"Training on device: {device}")
     logger.info(f"Training config: {train_cfg}")
 
-    # Model
-    model = DeepfakeForensicModel(config=model_cfg)
-    model.to(device)
-
-    # Optimizer & Scheduler
-    optimizer = create_optimizer(model, train_cfg)
-    scheduler = create_scheduler(optimizer, train_cfg)
-
-    # AMP scaler
-    scaler = None
-    if train_cfg.use_amp and device.type == "cuda":
-        scaler = torch.cuda.amp.GradScaler()
-
-    # Resume
-    start_epoch = 0
-    best_auc = 0.0
-    if resume_from:
-        loaded_epoch, metrics = load_checkpoint(
-            resume_from, model, optimizer, scheduler, device=str(device)
-        )
-        start_epoch = loaded_epoch + 1
-        best_auc = metrics.get("auc_roc", 0.0)
-        logger.info(f"Resumed from epoch {start_epoch}, best AUC={best_auc:.4f}")
-
     # Enable caching in datasets if requested
     for dataset in [train_dataset, val_dataset]:
-        if hasattr(dataset, "datasets"):  # ConcatDataset
-            for sub_ds in dataset.datasets:
+        if isinstance(dataset, Subset):
+            ds = dataset.dataset
+        else:
+            ds = dataset
+            
+        if hasattr(ds, "datasets"):  # ConcatDataset
+            for sub_ds in ds.datasets:
                 sub_ds.use_cache = use_cache
                 sub_ds.cache_dir = Path(cache_dir) if cache_dir else None
         else:
-            dataset.use_cache = use_cache
-            dataset.cache_dir = Path(cache_dir) if cache_dir else None
+            ds.use_cache = use_cache
+            ds.cache_dir = Path(cache_dir) if cache_dir else None
 
     # Resolve DataLoader workers and optimization settings
     import sys
@@ -462,7 +453,9 @@ def train(
         loader_kwargs["num_workers"] = 0
 
     # Extract labels from train_dataset
-    if hasattr(train_dataset, "datasets"):
+    if isinstance(train_dataset, Subset):
+        train_labels = [train_dataset.dataset.samples[i].label for i in train_dataset.indices]
+    elif hasattr(train_dataset, "datasets"):
         train_labels = []
         for sub_ds in train_dataset.datasets:
             train_labels.extend([s.label for s in sub_ds.samples])
@@ -475,10 +468,11 @@ def train(
     n_real_safe = max(n_real, 1)
     n_fake_safe = max(n_fake, 1)
     
-    # Compute per-sample loss weights
-    real_weight = torch.tensor(n_fake_safe / n_real_safe, dtype=torch.float32).to(device)
+    # Compute per-sample loss weights (capped at 3.0)
+    raw_weight = n_fake_safe / n_real_safe
+    real_weight = torch.tensor(min(raw_weight, 3.0), dtype=torch.float32).to(device)
     fake_weight = torch.tensor(1.0, dtype=torch.float32).to(device)
-    logger.info(f"Using per-sample loss weights - Real class: {real_weight.item():.4f}, Fake class: 1.0000")
+    logger.info(f"Per-sample weights: Real={real_weight.item():.2f}x, Fake=1.0x")
 
     # Add WeightedRandomSampler to training DataLoader
     from torch.utils.data import WeightedRandomSampler
@@ -503,24 +497,58 @@ def train(
         **loader_kwargs
     )
 
+    # Model
+    model = DeepfakeForensicModel(config=model_cfg)
+    model.to(device)
+
+    # Optimizer
+    optimizer = create_optimizer(model, train_cfg)
+
+    # Scheduler
+    total_train_steps = len(train_loader) * train_cfg.max_epochs
+    scheduler = get_scheduler(optimizer, train_cfg, total_train_steps, args)
+
+    logger.info(f"Scheduler: {args.scheduler or train_cfg.scheduler if args else train_cfg.scheduler}")
+    logger.info(f"Warmup steps: {args.warmup_steps or train_cfg.warmup_steps if args else train_cfg.warmup_steps}")
+    logger.info(f"Total train steps: {total_train_steps}")
+
+    # Resume checkpoint
+    start_epoch = 0
+    best_auc = 0.0
+    if resume_from:
+        loaded_epoch, metrics = load_checkpoint(
+            resume_from, model, optimizer, scheduler, device=str(device)
+        )
+        start_epoch = loaded_epoch + 1
+        best_auc = metrics.get("auc_roc", 0.0)
+        logger.info(f"Resumed from epoch {start_epoch}, best AUC={best_auc:.4f}")
+
+    # AMP scaler
+    scaler = None
+    if train_cfg.use_amp and device.type == "cuda":
+        scaler = torch.cuda.amp.GradScaler()
+
     # Training loop
     patience_counter = 0
 
     for epoch in range(start_epoch, train_cfg.max_epochs):
         epoch_start = time.time()
 
+        # Log both backbone and head LR at epoch start
+        backbone_lr = optimizer.param_groups[0]['lr']
+        head_lr = optimizer.param_groups[1]['lr']
+        logger.info(f"Epoch {epoch} start | Backbone LR={backbone_lr:.2e} | Head LR={head_lr:.2e}")
+
         # Train
         train_losses = train_one_epoch(
             model, train_loader, optimizer, device,
             train_cfg, epoch, scaler,
-            real_weight=real_weight, fake_weight=fake_weight
+            real_weight=real_weight, fake_weight=fake_weight,
+            scheduler=scheduler
         )
 
         # Validate
         val_losses, val_metrics = validate(model, val_loader, device, train_cfg)
-
-        # Step scheduler
-        scheduler.step()
 
         epoch_time = time.time() - epoch_start
         current_auc = val_metrics.get("auc_roc", 0.0)
@@ -569,6 +597,8 @@ def train(
                 )
                 break
 
+
+
     logger.info(f"Training complete. Best AUC: {best_auc:.4f}")
 
 
@@ -597,6 +627,11 @@ def main():
                         help="Disable caching and run on-the-fly preprocessing")
     parser.add_argument("--cache-dir", default="output/cache",
                         help="Directory where preprocessed tensors are saved/loaded")
+    parser.add_argument("--warmup-steps", type=int, default=None,
+                        help="Number of steps for learning rate warmup")
+    parser.add_argument("--scheduler", type=str, default=None,
+                        choices=["cosine", "step", "none"],
+                        help="Override config scheduler. none=constant LR after warmup.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility")
     args = parser.parse_args()
@@ -621,6 +656,12 @@ def main():
         t_cfg.learning_rate = args.lr
     if args.grad_accum:
         t_cfg.gradient_accumulation_steps = args.grad_accum
+    if args.warmup_steps is not None:
+        t_cfg.warmup_steps = args.warmup_steps
+    elif args.max_samples == 500:
+        t_cfg.warmup_steps = 100
+    if args.scheduler is not None:
+        t_cfg.scheduler = args.scheduler
 
     # Create datasets
     from datasets import (
@@ -638,18 +679,40 @@ def main():
     if DatasetClass is None:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
-    train_dataset = DatasetClass(
-        args.data_root, split="train", max_samples=args.max_samples,
-        use_cache=args.use_cache, cache_dir=args.cache_dir
-    )
-    val_dataset = DatasetClass(
-        args.data_root, split="val", max_samples=args.max_samples,
+    # Use stratified split on a single dataset to guarantee class distribution
+    from torch.utils.data import Subset
+    from sklearn.model_selection import train_test_split
+
+    dataset = DatasetClass(
+        args.data_root, split="all", max_samples=args.max_samples,
         use_cache=args.use_cache, cache_dir=args.cache_dir
     )
 
+    all_labels = [dataset.samples[i].label for i in range(len(dataset))]
+    all_idx = list(range(len(dataset)))
+
+    # Stratified split: train vs (val+test)
+    train_idx, temp_idx = train_test_split(
+        all_idx, test_size=0.2, stratify=all_labels,
+        random_state=42
+    )
+
+    # Stratified split: val vs test
+    val_idx, test_idx = train_test_split(
+        temp_idx, test_size=0.5, stratify=[all_labels[i] for i in temp_idx],
+        random_state=42
+    )
+
+    train_dataset = Subset(dataset, train_idx)
+    val_dataset = Subset(dataset, val_idx)
+    test_dataset = Subset(dataset, test_idx)
+
+    val_real_count = sum(1 for i in val_idx if all_labels[i] == 0)
+    logger.info(f"Val split: {len(val_idx)} samples ({val_real_count} real)")
+
     train(
         train_dataset, val_dataset, train_cfg=t_cfg, resume_from=args.resume,
-        use_cache=args.use_cache, cache_dir=args.cache_dir
+        use_cache=args.use_cache, cache_dir=args.cache_dir, args=args
     )
 
 
