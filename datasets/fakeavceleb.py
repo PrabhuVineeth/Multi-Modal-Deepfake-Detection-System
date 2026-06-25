@@ -53,7 +53,7 @@ class FakeAVCelebDataset(BaseDeepfakeDataset):
         super().__init__(root_dir, split, config, max_samples, use_cache, cache_dir)
 
     def _load_samples(self) -> None:
-        """Parse FakeAVCeleb directory structure and partition splits deterministically."""
+        """Parse FakeAVCeleb directory structure and partition splits deterministically and randomly."""
         # Try metadata CSV first
         meta_file = self.root_dir / "meta_data.csv"
         if meta_file.exists():
@@ -61,8 +61,13 @@ class FakeAVCelebDataset(BaseDeepfakeDataset):
         else:
             self._load_from_dirs()
 
-        # Sort samples to ensure deterministic splitting across runs
+        # Sort samples first to ensure baseline consistency across environments
         self.samples.sort(key=lambda s: s.video_path)
+
+        # Deterministic shuffle using a fixed random seed
+        import random
+        rng = random.Random(42)
+        rng.shuffle(self.samples)
 
         # Partition the samples deterministically into train/val/test splits
         # Use ratios: 80% train, 10% val, 10% test
