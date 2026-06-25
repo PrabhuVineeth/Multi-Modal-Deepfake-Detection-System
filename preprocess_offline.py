@@ -36,6 +36,8 @@ def parse_args():
                         help="Maximum samples to process per dataset (for testing)")
     parser.add_argument("--chunk-size", type=int, default=100,
                         help="Save manifest and update stats every N samples")
+    parser.add_argument("--splits", default="train,val,test",
+                        help="Comma-separated splits to process (e.g. train,val,test)")
     
     # Cache management & validation actions
     parser.add_argument("--validate", action="store_true", default=False,
@@ -183,29 +185,31 @@ def main():
     logger.info("Initializing datasets for preprocessing...")
     datasets_to_preprocess = []
     
-    if Path(args.fakeavceleb_root).exists():
-        logger.info(f"Loading FakeAVCeleb from {args.fakeavceleb_root}")
-        datasets_to_preprocess.append(
-            FakeAVCelebDataset(args.fakeavceleb_root, split="train", max_samples=args.max_samples)
-        )
-    else:
-        logger.warning(f"FakeAVCeleb directory not found: {args.fakeavceleb_root}")
-        
-    if Path(args.faceforensics_root).exists():
-        logger.info(f"Loading FaceForensics++ from {args.faceforensics_root}")
-        datasets_to_preprocess.append(
-            FaceForensicsDataset(args.faceforensics_root, split="train", max_samples=args.max_samples)
-        )
-    else:
-        logger.warning(f"FaceForensics++ directory not found: {args.faceforensics_root}")
-        
-    if Path(args.lavdf_root).exists():
-        logger.info(f"Loading LAV-DF from {args.lavdf_root}")
-        datasets_to_preprocess.append(
-            LAVDFDataset(args.lavdf_root, split="train", max_samples=args.max_samples)
-        )
-    else:
-        logger.warning(f"LAV-DF directory not found: {args.lavdf_root}")
+    splits = [s.strip() for s in args.splits.split(",") if s.strip()]
+    for split in splits:
+        if Path(args.fakeavceleb_root).exists():
+            logger.info(f"Loading FakeAVCeleb ({split}) from {args.fakeavceleb_root}")
+            datasets_to_preprocess.append(
+                FakeAVCelebDataset(args.fakeavceleb_root, split=split, max_samples=args.max_samples)
+            )
+        else:
+            logger.warning(f"FakeAVCeleb directory not found: {args.fakeavceleb_root}")
+            
+        if Path(args.faceforensics_root).exists():
+            logger.info(f"Loading FaceForensics++ ({split}) from {args.faceforensics_root}")
+            datasets_to_preprocess.append(
+                FaceForensicsDataset(args.faceforensics_root, split=split, max_samples=args.max_samples)
+            )
+        else:
+            logger.warning(f"FaceForensics++ directory not found: {args.faceforensics_root}")
+            
+        if Path(args.lavdf_root).exists():
+            logger.info(f"Loading LAV-DF ({split}) from {args.lavdf_root}")
+            datasets_to_preprocess.append(
+                LAVDFDataset(args.lavdf_root, split=split, max_samples=args.max_samples)
+            )
+        else:
+            logger.warning(f"LAV-DF directory not found: {args.lavdf_root}")
         
     if not datasets_to_preprocess:
         logger.error("No valid dataset directories found. Exiting.")

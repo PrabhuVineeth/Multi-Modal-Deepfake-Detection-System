@@ -53,13 +53,33 @@ class FakeAVCelebDataset(BaseDeepfakeDataset):
         super().__init__(root_dir, split, config, max_samples, use_cache, cache_dir)
 
     def _load_samples(self) -> None:
-        """Parse FakeAVCeleb directory structure."""
+        """Parse FakeAVCeleb directory structure and partition splits deterministically."""
         # Try metadata CSV first
         meta_file = self.root_dir / "meta_data.csv"
         if meta_file.exists():
             self._load_from_csv(meta_file)
         else:
             self._load_from_dirs()
+
+        # Sort samples to ensure deterministic splitting across runs
+        self.samples.sort(key=lambda s: s.video_path)
+
+        # Partition the samples deterministically into train/val/test splits
+        # Use ratios: 80% train, 10% val, 10% test
+        num_samples = len(self.samples)
+        train_end = int(num_samples * 0.8)
+        val_end = train_end + int(num_samples * 0.1)
+
+        if self.split == "train":
+            self.samples = self.samples[:train_end]
+        elif self.split == "val":
+            self.samples = self.samples[train_end:val_end]
+        elif self.split == "test":
+            self.samples = self.samples[val_end:]
+
+        # Update the split attribute on the metadata objects to match the partitioned split
+        for s in self.samples:
+            s.split = self.split
 
     def _load_from_csv(self, meta_file: Path) -> None:
         """Load samples from metadata CSV."""
