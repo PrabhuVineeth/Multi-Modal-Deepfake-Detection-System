@@ -130,31 +130,36 @@ def compute_multitask_loss(
         Tuple of (total_loss, loss_dict).
     """
     losses = {}
+    # Cast tensors to float32 for high precision dynamic range (prevents FP16 overflow/NaN under weighted loss)
+    logits = output.logits.squeeze(-1).float()
+    labels = labels.float()
+    weight_fp32 = weight.float() if weight is not None else None
+
+    # Clamp logits to prevent exponential overflow in FP16/FP32
+    logits = torch.clamp(logits, min=-15.0, max=15.0)
+
     # 1. Classification loss (BCE with logits)
-    logits = output.logits.squeeze(-1)
-    # Clamp logits for numerical stability (prevents NaN gradients under large pos_weight / AMP)
-    logits = torch.clamp(logits, min=-20.0, max=20.0)
     cls_loss = F.binary_cross_entropy_with_logits(
-        logits, labels.float(), weight=weight
+        logits, labels, weight=weight_fp32
     )
 
     # 2. Lip sync loss
-    lip_target = labels.float().unsqueeze(-1)  # FAKE=1 → high score
-    lip_loss = F.mse_loss(output.lip_sync_score, lip_target)
+    lip_target = labels.unsqueeze(-1)  # FAKE=1 → high score
+    lip_loss = F.mse_loss(output.lip_sync_score.float(), lip_target)
 
     # 3. Identity loss
-    id_loss = F.mse_loss(output.identity_score, lip_target)
+    id_loss = F.mse_loss(output.identity_score.float(), lip_target)
 
     # 4. Temporal loss
-    temp_loss = F.mse_loss(output.temporal_score, lip_target)
+    temp_loss = F.mse_loss(output.temporal_score.float(), lip_target)
 
     # 5. AV sync loss
-    sync_loss = F.mse_loss(output.av_sync_score, lip_target)
+    sync_loss = F.mse_loss(output.av_sync_score.float(), lip_target)
 
     # 6. Boundary loss (TFBD CRF)
-    boundary_loss = torch.tensor(0.0, device=labels.device)
+    boundary_loss = torch.tensor(0.0, dtype=torch.float32, device=labels.device)
     if output.boundary_loss is not None:
-        boundary_loss = output.boundary_loss
+        boundary_loss = output.boundary_loss.float()
 
     # Weighted sum
     total = (
@@ -198,17 +203,18 @@ def train_one_epoch(
     device: torch.device,
     config: TrainingConfig,
     epoch: int,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    scaler: Optional[torch.amp.GradScaler] = None,
     real_weight: Optional[torch.Tensor] = None,
     fake_weight: Optional[torch.Tensor] = None,
     scheduler = None,
+    use_bf16: bool = False,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
     epoch_losses = {}
     num_batches = 0
 
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
 
     for batch_idx, batch in enumerate(dataloader):
         audio = batch["audio"].to(device)
@@ -226,7 +232,8 @@ def train_one_epoch(
 
         # Forward pass
         if config.use_amp and device.type == "cuda":
-            with torch.amp.autocast('cuda'):
+            dtype = torch.bfloat16 if use_bf16 else torch.float16
+            with torch.amp.autocast('cuda', dtype=dtype):
                 output = model(
                     audio, faces, mouths,
                     boundary_tags=boundary_tags,
@@ -234,6 +241,8 @@ def train_one_epoch(
                 loss, loss_dict = compute_multitask_loss(
                     output, labels, boundary_tags, config, weight=sample_weights
                 )
+                if torch.isnan(loss):
+                    raise ValueError(f"NaN Loss detected at batch {batch_idx+1}! Aborting training to prevent weight corruption.")
                 loss = loss / config.gradient_accumulation_steps
         else:
             output = model(
@@ -243,6 +252,8 @@ def train_one_epoch(
             loss, loss_dict = compute_multitask_loss(
                 output, labels, boundary_tags, config, weight=sample_weights
             )
+            if torch.isnan(loss):
+                raise ValueError(f"NaN Loss detected at batch {batch_idx+1}! Aborting training to prevent weight corruption.")
             loss = loss / config.gradient_accumulation_steps
 
         # Backward pass
@@ -265,14 +276,14 @@ def train_one_epoch(
                     model.parameters(), config.max_grad_norm
                 )
                 optimizer.step()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
-        # Step scheduler
-        if scheduler is not None:
-            scheduler.step()
+            # Step scheduler only when optimizer steps
+            if scheduler is not None:
+                scheduler.step()
 
-        # Log learning rate at batch 1 and every 25 batches
-        if batch_idx == 0 or (batch_idx + 1) % 25 == 0:
+        # Log learning rate at batch 1 and every 50 batches (reduce log/sync overhead)
+        if batch_idx == 0 or (batch_idx + 1) % 50 == 0:
             logger.info(f"  Batch {batch_idx+1}/{len(dataloader)} | LR: {optimizer.param_groups[0]['lr']:.2e}")
 
         # Accumulate losses
@@ -280,7 +291,7 @@ def train_one_epoch(
             epoch_losses[k] = epoch_losses.get(k, 0) + v
         num_batches += 1
 
-        if (batch_idx + 1) % 25 == 0:
+        if (batch_idx + 1) % 50 == 0:
             logger.info(f"  Loss breakdown: cls={loss_dict['cls']:.4f} | lip={loss_dict['lip']:.4f} | id={loss_dict['id']:.4f} | temp={loss_dict['temp']:.4f} | sync={loss_dict['sync']:.4f} | boundary={loss_dict['boundary']:.4f}")
 
     # Average losses
@@ -290,12 +301,13 @@ def train_one_epoch(
     return epoch_losses
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def validate(
     model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
     config: TrainingConfig,
+    use_bf16: bool = False,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     Validate the model.
@@ -317,7 +329,8 @@ def validate(
         labels = batch["label"].to(device)
 
         if config.use_amp and device.type == "cuda":
-            with torch.amp.autocast('cuda'):
+            dtype = torch.bfloat16 if use_bf16 else torch.float16
+            with torch.amp.autocast('cuda', dtype=dtype):
                 output = model(audio, faces, mouths)
                 _, loss_dict = compute_multitask_loss(output, labels, None, config, weight=None)
         else:
@@ -332,8 +345,8 @@ def validate(
         logits_val = output.logits.squeeze(-1)
         probs = torch.sigmoid(logits_val)
         all_labels.extend(labels.cpu().numpy())
-        all_scores.extend(probs.cpu().numpy())
-        all_logits.extend(logits_val.reshape(-1).cpu().numpy().tolist())
+        all_scores.extend(probs.float().cpu().numpy())
+        all_logits.extend(logits_val.reshape(-1).float().cpu().numpy().tolist())
 
     # Average losses
     for k in epoch_losses:
@@ -403,14 +416,17 @@ def train(
     """
     model_cfg = model_cfg or model_config
     train_cfg = train_cfg or training_config
-    # Force use_amp=False for stable float32 training under highly weighted BCE loss
-    train_cfg.use_amp = False
+    # AMP is enabled via config.use_amp (True by default for RTX 4070)
     path_cfg = path_cfg or path_config
 
     # Setup
     setup_logger(log_dir=str(path_cfg.output_dir / "logs"))
     device = get_device()
     path_cfg.ensure_dirs()
+
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+        logger.info("cuDNN benchmarking enabled for optimized kernel selection")
 
     logger.info(f"Training on device: {device}")
     logger.info(f"Training config: {train_cfg}")
@@ -448,7 +464,7 @@ def train(
     if num_workers > 0:
         loader_kwargs["num_workers"] = num_workers
         loader_kwargs["persistent_workers"] = True
-        loader_kwargs["prefetch_factor"] = 2
+        loader_kwargs["prefetch_factor"] = 2  # Set to 2 to minimize RAM footprint/Windows spawn lag
     else:
         loader_kwargs["num_workers"] = 0
 
@@ -491,10 +507,11 @@ def train(
         drop_last=True,
         **loader_kwargs
     )
+    val_loader_kwargs = {**loader_kwargs, "batch_size": min(train_cfg.batch_size * 2, 16)}
     val_loader = DataLoader(
         val_dataset,
         shuffle=False,
-        **loader_kwargs
+        **val_loader_kwargs
     )
 
     # Model
@@ -505,34 +522,70 @@ def train(
     optimizer = create_optimizer(model, train_cfg)
 
     # Scheduler
-    total_train_steps = len(train_loader) * train_cfg.max_epochs
+    total_train_steps = (len(train_loader) // train_cfg.gradient_accumulation_steps) * train_cfg.max_epochs
     scheduler = get_scheduler(optimizer, train_cfg, total_train_steps, args)
 
     logger.info(f"Scheduler: {args.scheduler or train_cfg.scheduler if args else train_cfg.scheduler}")
     logger.info(f"Warmup steps: {args.warmup_steps or train_cfg.warmup_steps if args else train_cfg.warmup_steps}")
     logger.info(f"Total train steps: {total_train_steps}")
 
+    # AMP configuration (bfloat16 auto-detection for RTX 4070)
+    scaler = None
+    use_bf16 = False
+    if train_cfg.use_amp and device.type == "cuda":
+        if torch.cuda.is_bf16_supported():
+            logger.info("NVIDIA RTX 4070 supports native bfloat16. Enabling BF16 AMP (No GradScaler needed)")
+            use_bf16 = True
+        else:
+            logger.info("BF16 not supported. Enabling FP16 AMP with GradScaler")
+            scaler = torch.amp.GradScaler('cuda')
+
     # Resume checkpoint
     start_epoch = 0
     best_auc = 0.0
+    patience_counter = 0
     if resume_from:
-        loaded_epoch, metrics = load_checkpoint(
-            resume_from, model, optimizer, scheduler, device=str(device)
+        loaded_epoch, metrics, patience_counter = load_checkpoint(
+            resume_from, model, optimizer, scheduler, device=str(device), scaler=scaler
         )
         start_epoch = loaded_epoch + 1
         best_auc = metrics.get("auc_roc", 0.0)
-        logger.info(f"Resumed from epoch {start_epoch}, best AUC={best_auc:.4f}")
+        logger.info(f"Resumed from epoch {start_epoch}, best AUC={best_auc:.4f}, patience={patience_counter}")
 
-    # AMP scaler
-    scaler = None
-    if train_cfg.use_amp and device.type == "cuda":
-        scaler = torch.cuda.amp.GradScaler()
+    # ── Configuration summary ─────────────────────────────────────────────
+    gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+    gpu_mem  = torch.cuda.get_device_properties(0).total_memory // (1024**2) if device.type == "cuda" else 0
+    logger.info("=" * 60)
+    logger.info("  TRAINING CONFIGURATION SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"  Batch size       : {train_cfg.batch_size}")
+    logger.info(f"  AMP enabled      : {train_cfg.use_amp} (dtype={'bfloat16' if use_bf16 else 'float16'})")
+    logger.info(f"  DataLoader workers: {num_workers}")
+    logger.info(f"  GPU name         : {gpu_name}")
+    logger.info(f"  GPU memory (total): {gpu_mem} MB")
+    logger.info(f"  PyTorch version  : {torch.__version__}")
+    logger.info(f"  CUDA version     : {torch.version.cuda}")
+    logger.info("=" * 60)
+    # ─────────────────────────────────────────────────────────────────────
 
     # Training loop
     patience_counter = 0
 
     for epoch in range(start_epoch, train_cfg.max_epochs):
         epoch_start = time.time()
+
+        # ── GPU memory at epoch start ──────────────────────────────────────
+        if device.type == "cuda":
+            alloc  = torch.cuda.memory_allocated(device) / (1024**2)
+            reserv = torch.cuda.memory_reserved(device)  / (1024**2)
+            max_al = torch.cuda.max_memory_allocated(device) / (1024**2)
+            logger.info(
+                f"[GPU] Epoch {epoch} start | "
+                f"Allocated: {alloc:.0f} MB | "
+                f"Reserved: {reserv:.0f} MB | "
+                f"Max Allocated: {max_al:.0f} MB"
+            )
+        # ──────────────────────────────────────────────────────────────────
 
         # Log both backbone and head LR at epoch start
         backbone_lr = optimizer.param_groups[0]['lr']
@@ -544,18 +597,25 @@ def train(
             model, train_loader, optimizer, device,
             train_cfg, epoch, scaler,
             real_weight=real_weight, fake_weight=fake_weight,
-            scheduler=scheduler
+            scheduler=scheduler, use_bf16=use_bf16
         )
 
         # Validate
-        val_losses, val_metrics = validate(model, val_loader, device, train_cfg)
+        val_losses, val_metrics = validate(model, val_loader, device, train_cfg, use_bf16=use_bf16)
 
         epoch_time = time.time() - epoch_start
+        avg_batch_time = epoch_time / max(len(train_loader), 1)
+        epochs_left = train_cfg.max_epochs - epoch - 1
+        eta_seconds = avg_batch_time * len(train_loader) * epochs_left
+        eta_h = int(eta_seconds // 3600)
+        eta_m = int((eta_seconds % 3600) // 60)
         current_auc = val_metrics.get("auc_roc", 0.0)
 
         logger.info(
             f"Epoch {epoch}/{train_cfg.max_epochs} "
             f"({epoch_time:.1f}s) | "
+            f"Avg batch: {avg_batch_time:.2f}s | "
+            f"ETA: {eta_h}h {eta_m}m | "
             f"Train loss: {train_losses['total']:.4f} | "
             f"Val loss: {val_losses['total']:.4f} | "
             f"Val AUC: {current_auc:.4f} | "
@@ -569,7 +629,8 @@ def train(
         save_checkpoint(
             model, optimizer, epoch,
             {**val_losses, **val_metrics},
-            checkpoint_path, scheduler
+            checkpoint_path, scheduler,
+            scaler=scaler, patience_counter=patience_counter
         )
 
         # Best model tracking based on validation AUC
@@ -578,14 +639,12 @@ def train(
             best_auc = val_auc
             patience_counter = 0
             best_path = str(path_cfg.checkpoint_dir / "best_model.pth")
-            checkpoint = {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-                "metrics": {**val_losses, **val_metrics},
-            }
-            torch.save(checkpoint, best_path)
+            save_checkpoint(
+                model, optimizer, epoch,
+                {**val_losses, **val_metrics},
+                best_path, scheduler,
+                scaler=scaler, patience_counter=patience_counter
+            )
             print(f"  Best model saved (AUC: {best_auc:.4f})")
             logger.info(f"★ New best model: AUC={best_auc:.4f}")
         else:
@@ -643,8 +702,8 @@ def main():
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
     # Override config if specified
     t_cfg = TrainingConfig()

@@ -69,8 +69,15 @@ class BaseDeepfakeDataset(Dataset, ABC):
         self.use_cache = use_cache
         self.cache_dir = Path(cache_dir) if cache_dir else None
 
-        # Preprocessing pipeline
-        self.pipeline = PreprocessingPipeline(config=self.config)
+        # Preprocessing pipeline (lazy init to avoid worker VRAM bloat)
+        self._pipeline = None
+
+        # Pre-load manifest in memory once at startup
+        self._manifest_samples = {}
+        if self.use_cache and self.cache_dir:
+            raw = self._load_manifest()
+            self._manifest_samples = raw.get("samples", {})
+            logger.info(f"{self.__class__.__name__}: Preloaded manifest cache with {len(self._manifest_samples)} entries.")
 
         # Load sample list
         self.samples: List[SampleMetadata] = []
@@ -83,6 +90,13 @@ class BaseDeepfakeDataset(Dataset, ABC):
             f"{self.__class__.__name__}: loaded {len(self.samples)} samples "
             f"(split={split})"
         )
+
+    @property
+    def pipeline(self) -> PreprocessingPipeline:
+        """Get or initialize the preprocessing pipeline lazily."""
+        if self._pipeline is None:
+            self._pipeline = PreprocessingPipeline(config=self.config)
+        return self._pipeline
 
     @abstractmethod
     def _load_samples(self) -> None:
@@ -344,8 +358,7 @@ class BaseDeepfakeDataset(Dataset, ABC):
         cache_path = self.cache_dir / f"{key}.pt"
         
         # Verify in manifest
-        manifest = self._load_manifest()
-        sample_info = manifest.get("samples", {}).get(key)
+        sample_info = self._manifest_samples.get(key)
         if not sample_info:
             if cache_path.exists() and cache_path.stat().st_size > 10000:
                 sample_info = {"file_size": cache_path.stat().st_size}
@@ -364,7 +377,10 @@ class BaseDeepfakeDataset(Dataset, ABC):
                         pass
                     return None
                     
-                data = torch.load(cache_path, map_location="cpu", weights_only=False)
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    data = torch.load(cache_path, map_location="cpu", weights_only=False)
                 
                 # Convert visual tensors from uint8 to float32 [0, 1] range
                 if "face_frames" in data and data["face_frames"].dtype == torch.uint8:
@@ -382,7 +398,7 @@ class BaseDeepfakeDataset(Dataset, ABC):
                 return None
         return None
 
-    def _save_to_cache(self, video_path: str, data: Dict[str, Any], update_manifest: bool = True) -> None:
+    def _save_to_cache(self, video_path: str, data: Dict[str, Any], update_manifest: bool = False) -> None:
         """Save a preprocessed sample to cache, converting visual to uint8, audio to PCM16, and updating manifest."""
         if not self.cache_dir:
             return

@@ -92,7 +92,7 @@ class TrainingConfig:
     weight_decay: float = 1e-4
     warmup_steps: int = 500
     max_epochs: int = 5
-    batch_size: int = 4
+    batch_size: int = 8                 # Optimized for RTX 4070 12GB with AMP
     gradient_accumulation_steps: int = 4
     max_grad_norm: float = 1.0
 
@@ -110,14 +110,14 @@ class TrainingConfig:
     step_gamma: float = 0.5
 
     # Mixed precision
-    use_amp: bool = True
+    use_amp: bool = True               # Automatic Mixed Precision (FP16) enabled
 
     # Early stopping
     patience: int = 3
     min_delta: float = 1e-4
 
     # Data
-    num_workers: int = 4
+    num_workers: int = 4               # Optimal for Windows (spawn multiprocessing)
     pin_memory: bool = True
     train_split: float = 0.8
     val_split: float = 0.1

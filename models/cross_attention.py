@@ -82,13 +82,19 @@ class CrossAttentionLayer(nn.Module):
         Returns:
             Tuple of (output [B, T_q, D], attention_weights [B, num_heads, T_q, T_k]).
         """
-        # Cross-attention with residual
-        attn_out, attn_weights = self.attention(
-            query, key, value,
-            key_padding_mask=key_padding_mask,
-            need_weights=True,
-            average_attn_weights=False,  # Return per-head weights
-        )
+        # Force MultiheadAttention dot-product to run in FP32 to prevent FP16 overflow/NaN under AMP
+        with torch.amp.autocast('cuda', enabled=False):
+            attn_out, attn_weights = self.attention(
+                query.float(), key.float(), value.float(),
+                key_padding_mask=key_padding_mask,
+                need_weights=True,
+                average_attn_weights=False,  # Return per-head weights
+            )
+        
+        # Cast attention outputs back to the query tensor dtype
+        attn_out = attn_out.to(query.dtype)
+        attn_weights = attn_weights.to(query.dtype)
+        
         x = self.layer_norm(query + self.dropout(attn_out))
 
         # FFN with residual

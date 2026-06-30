@@ -128,12 +128,17 @@ class ForensicEvidenceAggregator(nn.Module):
         # Stack projected: [B, num_channels, hidden_dim]
         projected_stack = torch.stack(projected, dim=1)
 
-        # Self-attention across channels to learn importance
-        attended, attn_weights = self.channel_attention(
-            projected_stack, projected_stack, projected_stack,
-            need_weights=True,
-            average_attn_weights=True,
-        )
+        # Self-attention across channels to learn importance (FP32 forced under AMP for numerical safety)
+        with torch.amp.autocast('cuda', enabled=False):
+            p_stack_32 = projected_stack.float()
+            attended, attn_weights = self.channel_attention(
+                p_stack_32, p_stack_32, p_stack_32,
+                need_weights=True,
+                average_attn_weights=True,
+            )
+        attended = attended.to(projected_stack.dtype)
+        attn_weights = attn_weights.to(projected_stack.dtype)
+        
         # attn_weights: [B, num_channels, num_channels]
         attended = self.channel_norm(projected_stack + attended)
 
