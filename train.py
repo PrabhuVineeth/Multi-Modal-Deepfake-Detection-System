@@ -54,8 +54,11 @@ from utils.metrics import compute_all_metrics
 
 
 def forensic_collate_fn(batch):
-    """Custom collate: stack tensors normally, keep metadata as list (avoids None collation errors)."""
+    """Custom collate: skip failed samples, stack tensors, and keep metadata as a list."""
     from torch.utils.data._utils.collate import default_collate
+    batch = [item for item in batch if item is not None]
+    if not batch:
+        return None
     keys = batch[0].keys()
     result = {}
     for k in keys:
@@ -217,6 +220,9 @@ def train_one_epoch(
     optimizer.zero_grad(set_to_none=True)
 
     for batch_idx, batch in enumerate(dataloader):
+        if batch is None:
+            logger.warning(f"All samples failed in batch {batch_idx+1}; skipping batch.")
+            continue
         audio = batch["audio"].to(device)
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
@@ -365,6 +371,9 @@ def validate(
     num_batches = 0
 
     for batch in dataloader:
+        if batch is None:
+            logger.warning("All samples failed in validation batch; skipping batch.")
+            continue
         audio = batch["audio"].to(device)
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
@@ -640,6 +649,15 @@ def train(
             start_epoch = 0
             best_auc = 0.0
             patience_counter = 0
+            # Freeze backbone encoders — only train fusion/head layers
+            frozen = 0
+            for name, param in model.named_parameters():
+                if any(k in name for k in ["audio_encoder.backbone", "video_encoder.backbone", "mouth_encoder"]):
+                    param.requires_grad = False
+                    frozen += 1
+            trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            logger.info(f"Fine-tune mode: froze {frozen} backbone params. Trainable params: {trainable:,}")
+
         else:
             start_epoch = loaded_epoch + 1
             best_auc = metrics.get("auc_roc", 0.0)
@@ -853,6 +871,7 @@ def main():
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility")
     args = parser.parse_args()
+
 
     # Set random seed if specified
     if args.seed is not None:

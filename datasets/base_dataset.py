@@ -147,7 +147,7 @@ class BaseDeepfakeDataset(Dataset, ABC):
             preprocessed = self.pipeline.process(sample.video_path)
         except Exception as e:
             logger.warning(f"Failed to preprocess {sample.video_path}: {e}")
-            return self._get_dummy_sample(sample)
+            return None
 
         # Convert to raw unpadded tensors
         result = self._preprocessed_to_tensors(preprocessed, sample)

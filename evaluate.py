@@ -51,6 +51,9 @@ def evaluate_dataset(
     all_true_tags = []
 
     for batch in dataloader:
+        if batch is None:
+            logger.warning("All samples failed in evaluation batch; skipping batch.")
+            continue
         audio = batch["audio"].to(device)
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
