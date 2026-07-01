@@ -225,6 +225,12 @@ def train_one_epoch(
         if boundary_tags is not None:
             boundary_tags = boundary_tags.to(device)
 
+        # NaN Guard: Check inputs
+        if torch.isnan(audio).any() or torch.isnan(faces).any() or torch.isnan(mouths).any():
+            logger.warning(f"NaN detected in batch inputs at batch {batch_idx+1}! Skipping batch.")
+            optimizer.zero_grad(set_to_none=True)
+            continue
+
         if real_weight is not None and fake_weight is not None:
             sample_weights = torch.where(labels == 0, real_weight, fake_weight)
         else:
@@ -238,22 +244,46 @@ def train_one_epoch(
                     audio, faces, mouths,
                     boundary_tags=boundary_tags,
                 )
+                
+                # NaN Guard: Check outputs
+                if torch.isnan(output.logits).any():
+                    logger.warning(f"NaN detected in logits at batch {batch_idx+1}! Skipping batch.")
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
+                    
                 loss, loss_dict = compute_multitask_loss(
                     output, labels, boundary_tags, config, weight=sample_weights
                 )
+                
+                # NaN Guard: Check loss
                 if torch.isnan(loss):
-                    raise ValueError(f"NaN Loss detected at batch {batch_idx+1}! Aborting training to prevent weight corruption.")
+                    logger.warning(f"NaN loss detected at batch {batch_idx+1}! Skipping batch.")
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
+                    
                 loss = loss / config.gradient_accumulation_steps
         else:
             output = model(
                 audio, faces, mouths,
                 boundary_tags=boundary_tags,
             )
+            
+            # NaN Guard: Check outputs
+            if torch.isnan(output.logits).any():
+                logger.warning(f"NaN detected in logits at batch {batch_idx+1}! Skipping batch.")
+                optimizer.zero_grad(set_to_none=True)
+                continue
+                
             loss, loss_dict = compute_multitask_loss(
                 output, labels, boundary_tags, config, weight=sample_weights
             )
+            
+            # NaN Guard: Check loss
             if torch.isnan(loss):
-                raise ValueError(f"NaN Loss detected at batch {batch_idx+1}! Aborting training to prevent weight corruption.")
+                logger.warning(f"NaN loss detected at batch {batch_idx+1}! Skipping batch.")
+                optimizer.zero_grad(set_to_none=True)
+                continue
+                
             loss = loss / config.gradient_accumulation_steps
 
         # Backward pass
@@ -264,6 +294,18 @@ def train_one_epoch(
 
         # Gradient accumulation step
         if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
+            # NaN Guard: Check gradients before optimizer step
+            has_nan_grad = False
+            for p in model.parameters():
+                if p.grad is not None and torch.isnan(p.grad).any():
+                    has_nan_grad = True
+                    break
+                    
+            if has_nan_grad:
+                logger.warning(f"NaN detected in gradients at batch {batch_idx+1}! Skipping optimizer step.")
+                optimizer.zero_grad(set_to_none=True)
+                continue
+                
             if scaler is not None:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(
@@ -507,7 +549,28 @@ def train(
         drop_last=True,
         **loader_kwargs
     )
-    val_loader_kwargs = {**loader_kwargs, "batch_size": min(train_cfg.batch_size * 2, 16)}
+    # Subsetting validation dataset if max_val_samples is specified
+    if args and hasattr(args, "max_val_samples") and args.max_val_samples is not None:
+        if isinstance(val_dataset, Subset):
+            val_dataset = Subset(val_dataset.dataset, val_dataset.indices[:args.max_val_samples])
+        else:
+            val_dataset = Subset(val_dataset, list(range(min(len(val_dataset), args.max_val_samples))))
+        logger.info(f"Subsetting validation dataset to max_val_samples: {len(val_dataset)}")
+
+    val_batch_size = min(train_cfg.batch_size * 2, 16)
+    if args and hasattr(args, "val_batch_size") and args.val_batch_size is not None:
+        val_batch_size = args.val_batch_size
+        logger.info(f"Overriding validation batch size: {val_batch_size}")
+
+    val_loader_kwargs = {
+        **loader_kwargs,
+        "batch_size": val_batch_size,
+        "num_workers": 0,
+        "persistent_workers": False
+    }
+    if "prefetch_factor" in val_loader_kwargs:
+        del val_loader_kwargs["prefetch_factor"]
+
     val_loader = DataLoader(
         val_dataset,
         shuffle=False,
@@ -545,11 +608,62 @@ def train(
     best_auc = 0.0
     patience_counter = 0
     if resume_from:
-        loaded_epoch, metrics, patience_counter = load_checkpoint(
-            resume_from, model, optimizer, scheduler, device=str(device), scaler=scaler
-        )
-        start_epoch = loaded_epoch + 1
-        best_auc = metrics.get("auc_roc", 0.0)
+        fine_tune = bool(args and getattr(args, "fine_tune", False))
+        if fine_tune:
+            loaded_epoch, metrics, _ = load_checkpoint(
+                resume_from, model, optimizer=None, scheduler=None,
+                device=str(device), scaler=None
+            )
+            logger.info(
+                "Loaded checkpoint weights for fine-tuning; "
+                "resetting epoch, optimizer, scheduler, best AUC, and patience."
+            )
+        else:
+            loaded_epoch, metrics, patience_counter = load_checkpoint(
+                resume_from, model, optimizer, scheduler, device=str(device), scaler=scaler
+            )
+        # Override optimizer learning rate with --lr if specified
+        if args and args.lr:
+            new_lr = args.lr
+            if len(optimizer.param_groups) > 1:
+                optimizer.param_groups[0]['lr'] = new_lr * 0.1
+                optimizer.param_groups[1]['lr'] = new_lr
+                if scheduler is not None:
+                    scheduler.base_lrs = [new_lr * 0.1, new_lr]
+                logger.info(f"Overrode optimizer learning rate with --lr: backbone={new_lr*0.1:.2e}, head={new_lr:.2e}")
+            else:
+                optimizer.param_groups[0]['lr'] = new_lr
+                if scheduler is not None:
+                    scheduler.base_lrs = [new_lr]
+                logger.info(f"Overrode optimizer learning rate with --lr: {new_lr:.2e}")
+        if fine_tune:
+            start_epoch = 0
+            best_auc = 0.0
+            patience_counter = 0
+        else:
+            start_epoch = loaded_epoch + 1
+            best_auc = metrics.get("auc_roc", 0.0)
+            best_epoch = loaded_epoch
+
+            # Load historical best AUC from this run's best checkpoint if it exists.
+            best_checkpoint_name = getattr(args, "best_checkpoint_name", "best_model.pth") if args else "best_model.pth"
+            best_model_path = path_cfg.checkpoint_dir / best_checkpoint_name
+            if best_model_path.exists():
+                try:
+                    best_checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
+                    historical_best = best_checkpoint.get("metrics", {}).get("auc_roc", 0.0)
+                    if historical_best > best_auc:
+                        best_auc = historical_best
+                        best_epoch = best_checkpoint.get("epoch", loaded_epoch)
+                        logger.info(
+                            f"Loaded historical best AUC from {best_checkpoint_name}: "
+                            f"{best_auc:.4f} (epoch {best_epoch})"
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not load historical best AUC from {best_checkpoint_name}: {e}")
+
+            # Correct patience_counter to account for epochs since the historical best
+            patience_counter = max(0, start_epoch - 1 - best_epoch)
         logger.info(f"Resumed from epoch {start_epoch}, best AUC={best_auc:.4f}, patience={patience_counter}")
 
     # ── Configuration summary ─────────────────────────────────────────────
@@ -569,8 +683,6 @@ def train(
     # ─────────────────────────────────────────────────────────────────────
 
     # Training loop
-    patience_counter = 0
-
     for epoch in range(start_epoch, train_cfg.max_epochs):
         epoch_start = time.time()
 
@@ -601,60 +713,93 @@ def train(
         )
 
         # Validate
-        val_losses, val_metrics = validate(model, val_loader, device, train_cfg, use_bf16=use_bf16)
+        val_every = args.val_every if args and hasattr(args, "val_every") and args.val_every is not None else 1
+        is_val_epoch = (epoch + 1) % val_every == 0 or epoch == train_cfg.max_epochs - 1
 
-        epoch_time = time.time() - epoch_start
-        avg_batch_time = epoch_time / max(len(train_loader), 1)
-        epochs_left = train_cfg.max_epochs - epoch - 1
-        eta_seconds = avg_batch_time * len(train_loader) * epochs_left
-        eta_h = int(eta_seconds // 3600)
-        eta_m = int((eta_seconds % 3600) // 60)
-        current_auc = val_metrics.get("auc_roc", 0.0)
+        if is_val_epoch:
+            val_losses, val_metrics = validate(model, val_loader, device, train_cfg, use_bf16=use_bf16)
 
-        logger.info(
-            f"Epoch {epoch}/{train_cfg.max_epochs} "
-            f"({epoch_time:.1f}s) | "
-            f"Avg batch: {avg_batch_time:.2f}s | "
-            f"ETA: {eta_h}h {eta_m}m | "
-            f"Train loss: {train_losses['total']:.4f} | "
-            f"Val loss: {val_losses['total']:.4f} | "
-            f"Val AUC: {current_auc:.4f} | "
-            f"Val Acc: {val_metrics.get('accuracy', 0):.4f}"
-        )
+            epoch_time = time.time() - epoch_start
+            avg_batch_time = epoch_time / max(len(train_loader), 1)
+            epochs_left = train_cfg.max_epochs - epoch - 1
+            eta_seconds = avg_batch_time * len(train_loader) * epochs_left
+            eta_h = int(eta_seconds // 3600)
+            eta_m = int((eta_seconds % 3600) // 60)
+            current_auc = val_metrics.get("auc_roc", 0.0)
 
-        # Save checkpoint
-        checkpoint_path = str(
-            path_cfg.checkpoint_dir / f"checkpoint_epoch_{epoch:03d}.pth"
-        )
-        save_checkpoint(
-            model, optimizer, epoch,
-            {**val_losses, **val_metrics},
-            checkpoint_path, scheduler,
-            scaler=scaler, patience_counter=patience_counter
-        )
+            logger.info(
+                f"Epoch {epoch}/{train_cfg.max_epochs} "
+                f"({epoch_time:.1f}s) | "
+                f"Avg batch: {avg_batch_time:.2f}s | "
+                f"ETA: {eta_h}h {eta_m}m | "
+                f"Train loss: {train_losses['total']:.4f} | "
+                f"Val loss: {val_losses['total']:.4f} | "
+                f"Val AUC: {current_auc:.4f} | "
+                f"Val Acc: {val_metrics.get('accuracy', 0):.4f}"
+            )
 
-        # Best model tracking based on validation AUC
-        val_auc = current_auc
-        if val_auc > best_auc:
-            best_auc = val_auc
-            patience_counter = 0
-            best_path = str(path_cfg.checkpoint_dir / "best_model.pth")
+            # Best model tracking based on validation AUC
+            val_auc = current_auc
+            if val_auc > best_auc:
+                best_auc = val_auc
+                patience_counter = 0
+                best_checkpoint_name = getattr(args, "best_checkpoint_name", "best_model.pth") if args else "best_model.pth"
+                best_path = str(path_cfg.checkpoint_dir / best_checkpoint_name)
+                save_checkpoint(
+                    model, optimizer, epoch,
+                    {**val_losses, **val_metrics},
+                    best_path, scheduler,
+                    scaler=scaler, patience_counter=patience_counter
+                )
+                print(f"  Best model saved (AUC: {best_auc:.4f})")
+                logger.info(f"[NEW BEST] New best model: AUC={best_auc:.4f}")
+            else:
+                patience_counter += 1
+
+            # Save checkpoint with updated patience_counter
+            checkpoint_path = str(
+                path_cfg.checkpoint_dir / f"checkpoint_epoch_{epoch:03d}.pth"
+            )
             save_checkpoint(
                 model, optimizer, epoch,
                 {**val_losses, **val_metrics},
-                best_path, scheduler,
+                checkpoint_path, scheduler,
                 scaler=scaler, patience_counter=patience_counter
             )
-            print(f"  Best model saved (AUC: {best_auc:.4f})")
-            logger.info(f"★ New best model: AUC={best_auc:.4f}")
         else:
-            patience_counter += 1
-            if patience_counter >= train_cfg.patience:
-                logger.info(
-                    f"Early stopping at epoch {epoch} "
-                    f"(patience={train_cfg.patience})"
-                )
-                break
+            epoch_time = time.time() - epoch_start
+            avg_batch_time = epoch_time / max(len(train_loader), 1)
+            epochs_left = train_cfg.max_epochs - epoch - 1
+            eta_seconds = avg_batch_time * len(train_loader) * epochs_left
+            eta_h = int(eta_seconds // 3600)
+            eta_m = int((eta_seconds % 3600) // 60)
+            
+            logger.info(
+                f"Epoch {epoch}/{train_cfg.max_epochs} "
+                f"({epoch_time:.1f}s) | "
+                f"Avg batch: {avg_batch_time:.2f}s | "
+                f"ETA: {eta_h}h {eta_m}m | "
+                f"Train loss: {train_losses['total']:.4f} | "
+                f"Validation skipped (val_every={val_every})"
+            )
+            
+            # Save periodic checkpoint without altering validation metrics or patience_counter
+            checkpoint_path = str(
+                path_cfg.checkpoint_dir / f"checkpoint_epoch_{epoch:03d}.pth"
+            )
+            save_checkpoint(
+                model, optimizer, epoch,
+                train_losses,
+                checkpoint_path, scheduler,
+                scaler=scaler, patience_counter=patience_counter
+            )
+
+        if patience_counter >= train_cfg.patience:
+            logger.info(
+                f"Early stopping at epoch {epoch} "
+                f"(patience={train_cfg.patience})"
+            )
+            break
 
 
 
@@ -670,6 +815,10 @@ def main():
                         help="Path to dataset root directory")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume from")
+    parser.add_argument("--fine-tune", action="store_true", default=False,
+                        help="Load --resume weights only and start a fresh fine-tuning run")
+    parser.add_argument("--best-checkpoint-name", type=str, default="best_model.pth",
+                        help="Filename for the best checkpoint saved under checkpoints/")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override max epochs")
     parser.add_argument("--batch-size", type=int, default=None,
@@ -688,6 +837,16 @@ def main():
                         help="Directory where preprocessed tensors are saved/loaded")
     parser.add_argument("--warmup-steps", type=int, default=None,
                         help="Number of steps for learning rate warmup")
+    parser.add_argument("--val-every", type=int, default=1,
+                        help="Perform validation every N epochs (default: 1)")
+    parser.add_argument("--max-val-samples", type=int, default=None,
+                        help="Limit validation dataset to a maximum number of samples")
+    parser.add_argument("--val-batch-size", type=int, default=None,
+                        help="Override validation batch size")
+    parser.add_argument("--num-workers", type=int, default=None,
+                        help="Override default number of DataLoader workers")
+    parser.add_argument("--no-amp", action="store_true", default=False,
+                        help="Disable Automatic Mixed Precision (AMP) training")
     parser.add_argument("--scheduler", type=str, default=None,
                         choices=["cosine", "step", "none"],
                         help="Override config scheduler. none=constant LR after warmup.")
@@ -721,6 +880,10 @@ def main():
         t_cfg.warmup_steps = 100
     if args.scheduler is not None:
         t_cfg.scheduler = args.scheduler
+    if args.num_workers is not None:
+        t_cfg.num_workers = args.num_workers
+    if args.no_amp:
+        t_cfg.use_amp = False
 
     # Create datasets
     from datasets import (
@@ -750,17 +913,45 @@ def main():
     all_labels = [dataset.samples[i].label for i in range(len(dataset))]
     all_idx = list(range(len(dataset)))
 
-    # Stratified split: train vs (val+test)
-    train_idx, temp_idx = train_test_split(
-        all_idx, test_size=0.2, stratify=all_labels,
-        random_state=42
-    )
+    # Balance validation and test splits: equal real and fake samples
+    # Separate real (label 0) and fake (label 1) indices
+    real_idx = [i for i in all_idx if all_labels[i] == 0]
+    fake_idx = [i for i in all_idx if all_labels[i] == 1]
 
-    # Stratified split: val vs test
-    val_idx, test_idx = train_test_split(
-        temp_idx, test_size=0.5, stratify=[all_labels[i] for i in temp_idx],
-        random_state=42
-    )
+    # Split real samples: 80% train, 10% val, 10% test
+    import random
+    rng = random.Random(42)
+    real_idx_shuffled = real_idx.copy()
+    rng.shuffle(real_idx_shuffled)
+
+    n_real = len(real_idx_shuffled)
+    train_real_end = int(n_real * 0.8)
+    val_real_end = train_real_end + int(n_real * 0.1)
+
+    train_real_idx = real_idx_shuffled[:train_real_end]
+    val_real_idx = real_idx_shuffled[train_real_end:val_real_end]
+    test_real_idx = real_idx_shuffled[val_real_end:]
+
+    # Match fake samples for val and test to balance them
+    val_fake_count = min(len(val_real_idx), len(fake_idx))
+    test_fake_count = min(len(test_real_idx), len(fake_idx) - val_fake_count)
+
+    fake_idx_shuffled = fake_idx.copy()
+    rng.shuffle(fake_idx_shuffled)
+
+    val_fake_idx = fake_idx_shuffled[:val_fake_count]
+    test_fake_idx = fake_idx_shuffled[val_fake_count:val_fake_count + test_fake_count]
+    train_fake_idx = fake_idx_shuffled[val_fake_count + test_fake_count:]
+
+    # Combine real and fake indices
+    train_idx = train_real_idx + train_fake_idx
+    val_idx = val_real_idx + val_fake_idx
+    test_idx = test_real_idx + test_fake_idx
+
+    # Shuffle lists to mix real and fake samples within splits
+    rng.shuffle(train_idx)
+    rng.shuffle(val_idx)
+    rng.shuffle(test_idx)
 
     train_dataset = Subset(dataset, train_idx)
     val_dataset = Subset(dataset, val_idx)

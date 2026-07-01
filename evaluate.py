@@ -220,12 +220,19 @@ def main():
                         help="Batch size")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Max samples")
+    parser.add_argument("--use-cache", action="store_true", default=True,
+                        help="Use cached preprocessed tensors (default: True)")
+    parser.add_argument("--no-cache", dest="use_cache", action="store_false",
+                        help="Disable caching and run on-the-fly preprocessing")
+    parser.add_argument("--cache-dir", default="output/cache",
+                        help="Directory where preprocessed tensors are saved/loaded")
     args = parser.parse_args()
 
     from datasets import (
         FaceForensicsDataset, FakeAVCelebDataset,
         LAVDFDataset,
     )
+    from train import forensic_collate_fn
 
     dataset_map = {
         "faceforensics": FaceForensicsDataset,
@@ -241,9 +248,13 @@ def main():
             logger.warning(f"Unknown dataset: {name}")
             continue
         ds = DatasetClass(
-            args.data_root, split="test", max_samples=args.max_samples
+            args.data_root, split="test", max_samples=args.max_samples,
+            use_cache=args.use_cache, cache_dir=args.cache_dir
         )
-        loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False)
+        loader = DataLoader(
+            ds, batch_size=args.batch_size, shuffle=False,
+            collate_fn=forensic_collate_fn
+        )
         datasets[name] = loader
 
     evaluate(args.checkpoint, datasets, args.output_dir)

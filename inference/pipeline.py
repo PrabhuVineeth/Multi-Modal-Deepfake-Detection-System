@@ -163,11 +163,26 @@ class ForensicInferencePipeline:
             output_path = Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
 
-            # Save JSON report
-            from utils.io_utils import save_json
-            report_path = str(output_path / "forensic_report.json")
-            save_json(report.to_dict(), report_path)
-            logger.info(f"Report saved: {report_path}")
+            # Save reports (JSON and HTML)
+            from reports.generator import ReportGenerator
+            generator = ReportGenerator(output_dir=str(output_path))
+            
+            # Select key frames (top 5 highest anomaly scores) for HTML report embedding
+            key_frames = []
+            if generate_heatmap and report.frame_anomaly_scores:
+                scores = np.array(report.frame_anomaly_scores)
+                # Get indices of top 5 highest anomaly scores
+                top_indices = np.argsort(scores)[-5:][::-1]
+                # Sort indices chronologically
+                top_indices = sorted(top_indices)
+                for idx in top_indices:
+                    if idx < len(preprocessed.frames):
+                        frame = preprocessed.frames[idx]
+                        score = scores[idx]
+                        overlay = self.heatmap_generator._create_overlay(frame, score)
+                        key_frames.append(overlay)
+                        
+            generator.generate(report, key_frames=key_frames, output_dir=str(output_path))
 
             # Generate heatmap video
             if generate_heatmap and report.frame_anomaly_scores:

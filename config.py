@@ -117,7 +117,7 @@ class TrainingConfig:
     min_delta: float = 1e-4
 
     # Data
-    num_workers: int = 4               # Optimal for Windows (spawn multiprocessing)
+    num_workers: int = 2               # Optimal for Windows (spawn multiprocessing)
     pin_memory: bool = True
     train_split: float = 0.8
     val_split: float = 0.1
@@ -153,7 +153,7 @@ class PathConfig:
 
     # Model checkpoints
     checkpoint_dir: Path = field(default_factory=lambda: Path(__file__).parent / "checkpoints")
-    best_model_path: Optional[Path] = None
+    best_model_path: Optional[Path] = field(default_factory=lambda: Path(__file__).parent / "checkpoints" / "best_model.pth")
 
     # Outputs
     output_dir: Path = field(default_factory=lambda: Path(__file__).parent / "output")

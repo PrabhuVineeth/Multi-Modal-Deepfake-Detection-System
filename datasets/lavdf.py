@@ -50,12 +50,22 @@ class LAVDFDataset(BaseDeepfakeDataset):
         super().__init__(root_dir, split, config, max_samples, use_cache, cache_dir)
 
     def _load_samples(self) -> None:
-        anno_base = self.root_dir / "annotations" / self.split
-        if anno_base.with_suffix(".json").exists():
-            self._load_from_json(anno_base.with_suffix(".json"))
-        elif anno_base.with_suffix(".csv").exists():
-            self._load_from_csv(anno_base.with_suffix(".csv"))
+        if self.split == "all":
+            splits_to_load = ["train", "val", "test"]
         else:
+            splits_to_load = [self.split]
+            
+        loaded_any = False
+        for s in splits_to_load:
+            anno_base = self.root_dir / "annotations" / s
+            if anno_base.with_suffix(".json").exists():
+                self._load_from_json(anno_base.with_suffix(".json"))
+                loaded_any = True
+            elif anno_base.with_suffix(".csv").exists():
+                self._load_from_csv(anno_base.with_suffix(".csv"))
+                loaded_any = True
+                
+        if not loaded_any:
             self._load_from_dirs()
 
     def _load_from_json(self, anno_file: Path) -> None:

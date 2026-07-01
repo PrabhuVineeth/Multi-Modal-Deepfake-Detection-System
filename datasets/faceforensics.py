@@ -83,6 +83,26 @@ class FaceForensicsDataset(BaseDeepfakeDataset):
             self._load_standard(standard_real)
         elif flat_real.exists():
             self._load_flat()
+            
+            # Sort and shuffle deterministically to ensure consistent partitioning
+            self.samples.sort(key=lambda s: s.video_path)
+            import random
+            rng = random.Random(42)
+            rng.shuffle(self.samples)
+            
+            num_samples = len(self.samples)
+            train_end = int(num_samples * 0.8)
+            val_end = train_end + int(num_samples * 0.1)
+            
+            if self.split == "train":
+                self.samples = self.samples[:train_end]
+            elif self.split == "val":
+                self.samples = self.samples[train_end:val_end]
+            elif self.split == "test":
+                self.samples = self.samples[val_end:]
+                
+            for s in self.samples:
+                s.split = self.split
         else:
             logger.warning(f"FF++ directory structure not recognised at {self.root_dir}")
 

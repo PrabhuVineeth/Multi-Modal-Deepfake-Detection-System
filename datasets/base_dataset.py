@@ -232,7 +232,11 @@ class BaseDeepfakeDataset(Dataset, ABC):
     def _get_cache_key(self, video_path: str) -> str:
         """Generate a unique SHA256 hash for the video path to use as a cache key."""
         import hashlib
-        return hashlib.sha256(Path(video_path).resolve().as_posix().encode("utf-8")).hexdigest()
+        path_str = Path(video_path).resolve().as_posix()
+        # Ensure Windows drive letter is always uppercase for hash consistency
+        if len(path_str) > 1 and path_str[1] == ":" and path_str[0].islower():
+            path_str = path_str[0].upper() + path_str[1:]
+        return hashlib.sha256(path_str.encode("utf-8")).hexdigest()
 
     def _load_manifest(self) -> Dict[str, Any]:
         """Load cache manifest file."""
