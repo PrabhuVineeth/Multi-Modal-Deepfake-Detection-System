@@ -617,6 +617,60 @@ def train(
 
     logger.info(f"Auto-computed training split label counts: real={n_real}, fake={n_fake}")
 
+    # Hard-examples injection (--hard-examples-file)
+    hard_examples_file = getattr(args, "hard_examples_file", None) if args else None
+    if hard_examples_file:
+        import json as _json
+        import random as _random
+        he_path = Path(hard_examples_file)
+        if not he_path.exists():
+            logger.warning(f"--hard-examples-file not found: {he_path}. Skipping hard-example injection.")
+        else:
+            with open(he_path, "r", encoding="utf-8") as _f:
+                he_data = _json.load(_f)
+            hard_vpaths = set(he_data.get("hard_video_paths", []))
+            logger.info(
+                f"Hard-example file loaded: {he_path.name} | "
+                f"{len(hard_vpaths)} hard video paths | "
+                f"FP={he_data.get('n_fp',0)}, FN={he_data.get('n_fn',0)}"
+            )
+
+            # Resolve hard and easy indices from train_dataset
+            base_ds = train_dataset.dataset if isinstance(train_dataset, Subset) else train_dataset
+            all_train_idx = (
+                list(train_dataset.indices) if isinstance(train_dataset, Subset)
+                else list(range(len(train_dataset)))
+            )
+
+            hard_idx  = [i for i in all_train_idx
+                         if base_ds.samples[i].video_path in hard_vpaths]
+            easy_idx  = [i for i in all_train_idx if i not in set(hard_idx)]
+
+            # Balance: easy sample = 2× hard count (configurable)
+            easy_multiplier = getattr(args, "hard_easy_ratio", 2)
+            n_easy_sample = min(len(easy_idx), len(hard_idx) * easy_multiplier)
+            _random.seed(42)
+            easy_sampled = _random.sample(easy_idx, n_easy_sample)
+
+            combined_idx = hard_idx + easy_sampled
+            _random.shuffle(combined_idx)
+            train_dataset = Subset(base_ds, combined_idx)
+
+            # Recompute labels/counts for the new subset
+            train_labels = [base_ds.samples[i].label for i in combined_idx]
+            n_real = sum(1 for l in train_labels if l == 0)
+            n_fake = sum(1 for l in train_labels if l == 1)
+            n_real_safe = max(n_real, 1)
+            n_fake_safe = max(n_fake, 1)
+            raw_weight = n_fake_safe / n_real_safe
+            real_weight = torch.tensor(min(raw_weight, 3.0), dtype=torch.float32).to(device)
+
+            logger.info(
+                f"Hard-example training subset: {len(combined_idx)} samples "
+                f"(hard={len(hard_idx)}, easy={n_easy_sample}) | "
+                f"real={n_real}, fake={n_fake}"
+            )
+
     # Optional WeightedRandomSampler (--balanced-sampler flag)
     use_balanced_sampler = bool(args and getattr(args, "balanced_sampler", False))
     sampler = None
@@ -993,6 +1047,11 @@ def main():
                         help="Focal loss focusing exponent gamma (default: 2.0)")
     parser.add_argument("--focal-alpha", type=float, default=None,
                         help="Focal loss alpha for positive class (optional, e.g. 0.25). None=disabled.")
+    parser.add_argument("--hard-examples-file", type=str, default=None,
+                        help="Path to hard_indices JSON from mine_hard_examples.py. "
+                             "When set, trains on hard examples + balanced easy examples.")
+    parser.add_argument("--hard-easy-ratio", type=int, default=2,
+                        help="Ratio of easy:hard samples when using --hard-examples-file (default: 2).")
     args = parser.parse_args()
 
 
