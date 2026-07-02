@@ -258,6 +258,18 @@ MDDS/
 
 See [`datasets/README.md`](datasets/README.md) for download instructions.
 
+## Final Checkpoint and Threshold Calibration Results
+
+The following table summarizes the final checkpoints, decision thresholds, and performance metrics selected for each dataset:
+
+| Dataset | Checkpoint | Val AUC | Threshold | Test F1 | Training Mode |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **FakeAVCeleb** | `checkpoints/best_model_fakeavceleb.pth` | 0.9132 | 0.50 | 0.7692 | Multimodal |
+| **FaceForensics++ (FF++)** | `checkpoints/best_model_faceforensics_visual.pth` | 0.8056 | 0.12 | 0.6972 | Visual-Only |
+| **LAV-DF** | *In Progress* | TBD | TBD | TBD | Multimodal |
+
+*Note: Visual-Only mode (disabling/zeroing audio input and down-weighting speech-lip/sync losses) was selected for FaceForensics++ because its videos do not contain meaningful/aligned audio tracks. This visual-only strategy yielded an **absolute +8.3% improvement** in Val AUC (from 0.7227 to 0.8056) over the multimodal configuration.*
+
 ## Novel Contributions
 
 1. **Forensic Evidence Aggregation Engine** — Attention-based weighting that learns per-sample which evidence channels are most discriminative
