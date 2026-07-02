@@ -56,13 +56,15 @@ def compute_metrics_at_threshold(labels: np.ndarray, scores: np.ndarray, thresho
 
 
 @torch.no_grad()
-def collect_predictions(model, dataloader, device):
+def collect_predictions(model, dataloader, device, visual_only: bool = False):
     model.eval()
     all_labels = []
     all_scores = []
     
     for batch in dataloader:
         audio = batch["audio"].to(device)
+        if visual_only:
+            audio = torch.zeros_like(audio)
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
         labels = batch["label"]
@@ -88,6 +90,10 @@ def main():
     parser.add_argument("--selection-metric", type=str, default="f1", choices=["f1", "balanced_acc"],
                         help="Metric to select the best threshold on validation split")
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--visual-only", action="store_true", default=False,
+                        help="Calibrate in visual-only mode (zero audio)")
+    parser.add_argument("--disable-audio", dest="visual_only", action="store_true",
+                        help="Alias for --visual-only")
     args = parser.parse_args()
     
     output_path = Path(args.output_dir)
@@ -108,6 +114,7 @@ def main():
         args.data_root, split="all",
         use_cache=args.use_cache, cache_dir=args.cache_dir
     )
+
     
     all_labels = [dataset.samples[i].label for i in range(len(dataset))]
     all_idx = list(range(len(dataset)))
@@ -164,7 +171,7 @@ def main():
     
     # ── Part 1: Validation Split Inference & Threshold Sweep ──
     logger.info(f"Running inference on validation split ({len(val_dataset)} samples)...")
-    val_labels, val_scores = collect_predictions(model, val_loader, device)
+    val_labels, val_scores = collect_predictions(model, val_loader, device, visual_only=args.visual_only)
     
     sweep_results = []
     best_val_f1_metrics = None
@@ -189,7 +196,8 @@ def main():
     
     # ── Part 2: Test Split Inference & Selected Threshold Evaluation ──
     logger.info(f"Running inference on test split ({len(test_dataset)} samples)...")
-    test_labels, test_scores = collect_predictions(model, test_loader, device)
+    test_labels, test_scores = collect_predictions(model, test_loader, device, visual_only=args.visual_only)
+
     
     test_metrics_050 = compute_metrics_at_threshold(test_labels, test_scores, 0.50)
     test_metrics_selected = compute_metrics_at_threshold(test_labels, test_scores, selected_threshold)

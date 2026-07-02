@@ -37,6 +37,7 @@ def evaluate_dataset(
     dataloader: DataLoader,
     device: torch.device,
     dataset_name: str = "",
+    visual_only: bool = False,
 ) -> Dict[str, any]:
     """
     Evaluate model on a single dataset.
@@ -55,6 +56,8 @@ def evaluate_dataset(
             logger.warning("All samples failed in evaluation batch; skipping batch.")
             continue
         audio = batch["audio"].to(device)
+        if visual_only:
+            audio = torch.zeros_like(audio)
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
         labels = batch["label"]
@@ -111,11 +114,37 @@ def evaluate_dataset(
     }
 
 
+def compute_metrics_at_t(labels, scores, t):
+    preds = (scores >= t).astype(int)
+    tp = int(((preds == 1) & (labels == 1)).sum())
+    tn = int(((preds == 0) & (labels == 0)).sum())
+    fp = int(((preds == 1) & (labels == 0)).sum())
+    fn = int(((preds == 0) & (labels == 1)).sum())
+    
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    accuracy = (tp + tn) / len(labels) if len(labels) > 0 else 0.0
+    
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": tp,
+        "tn": tn,
+        "fp": fp,
+        "fn": fn,
+    }
+
+
 def evaluate(
     checkpoint_path: str,
     datasets: Dict[str, DataLoader],
     output_dir: str,
     model_cfg: Optional[ModelConfig] = None,
+    visual_only: bool = False,
+    threshold: Optional[float] = None,
 ):
     """
     Full evaluation pipeline across multiple datasets.
@@ -125,6 +154,8 @@ def evaluate(
         datasets: Dict mapping dataset name → DataLoader.
         output_dir: Directory to save evaluation results.
         model_cfg: Model configuration.
+        visual_only: Whether to zero-out audio waveform.
+        threshold: Custom decision threshold to evaluate and report.
     """
     model_cfg = model_cfg or model_config
     device = get_device()
@@ -144,21 +175,34 @@ def evaluate(
     for name, dataloader in datasets.items():
         logger.info(f"Evaluating on: {name}")
 
-        result = evaluate_dataset(model, dataloader, device, name)
+        result = evaluate_dataset(model, dataloader, device, name, visual_only=visual_only)
         all_results[name] = result
+
+        labels = np.array(result["labels"])
+        scores = np.array(result["scores"])
 
         metrics = result["metrics"]
         logger.info(
-            f"  {name}: Acc={metrics.get('accuracy', 0):.4f} | "
+            f"  {name} (T=0.50): Acc={metrics.get('accuracy', 0):.4f} | "
             f"Precision={metrics.get('precision', 0):.4f} | "
             f"Recall={metrics.get('recall', 0):.4f} | "
             f"F1={metrics.get('f1_score', 0):.4f}"
         )
 
-        # Generate plots
-        labels = np.array(result["labels"])
-        scores = np.array(result["scores"])
+        m_050 = compute_metrics_at_t(labels, scores, 0.50)
+        logger.info(f"    Confusion Matrix T=0.50: TP={m_050['tp']} | TN={m_050['tn']} | FP={m_050['fp']} | FN={m_050['fn']}")
 
+        if threshold is not None:
+            m_cust = compute_metrics_at_t(labels, scores, threshold)
+            logger.info(
+                f"  {name} (T={threshold:.2f}): Acc={m_cust['accuracy']:.4f} | "
+                f"Precision={m_cust['precision']:.4f} | "
+                f"Recall={m_cust['recall']:.4f} | "
+                f"F1={m_cust['f1']:.4f}"
+            )
+            logger.info(f"    Confusion Matrix T={threshold:.2f}: TP={m_cust['tp']} | TN={m_cust['tn']} | FP={m_cust['fp']} | FN={m_cust['fn']}")
+
+        # Generate plots
         if len(np.unique(labels)) > 1:
             real_scores = scores[labels == 0]
             fake_scores = scores[labels == 1]
@@ -169,7 +213,7 @@ def evaluate(
                 save_path=str(output_path / f"scores_{name}.png"),
             )
 
-            predictions = (scores >= 0.5).astype(int)
+            predictions = (scores >= (threshold if threshold is not None else 0.50)).astype(int)
             confidences = np.where(predictions == 1, scores, 1 - scores)
             accuracies = (predictions == labels).astype(float)
 
@@ -208,6 +252,7 @@ def evaluate(
     logger.info(f"Evaluation results saved to: {output_path}")
 
 
+
 def main():
     """CLI entry point for evaluation."""
     parser = argparse.ArgumentParser(description="Evaluate Deepfake Forensic Model")
@@ -229,6 +274,12 @@ def main():
                         help="Disable caching and run on-the-fly preprocessing")
     parser.add_argument("--cache-dir", default="output/cache",
                         help="Directory where preprocessed tensors are saved/loaded")
+    parser.add_argument("--threshold", type=float, default=None,
+                        help="Custom decision threshold (default: None)")
+    parser.add_argument("--visual-only", action="store_true", default=False,
+                        help="Evaluate in visual-only mode (zero audio)")
+    parser.add_argument("--disable-audio", dest="visual_only", action="store_true",
+                        help="Alias for --visual-only")
     args = parser.parse_args()
 
     from datasets import (
@@ -260,7 +311,11 @@ def main():
         )
         datasets[name] = loader
 
-    evaluate(args.checkpoint, datasets, args.output_dir)
+    evaluate(
+        args.checkpoint, datasets, args.output_dir,
+        visual_only=args.visual_only, threshold=args.threshold
+    )
+
 
 
 if __name__ == "__main__":

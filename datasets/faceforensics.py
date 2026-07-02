@@ -83,7 +83,29 @@ class FaceForensicsDataset(BaseDeepfakeDataset):
             self._load_standard(standard_real)
         elif flat_real.exists():
             self._load_flat()
-            
+        else:
+            logger.warning(f"FF++ directory structure not recognised at {self.root_dir}")
+            return
+
+        # Exclude corrupt files
+        bad_files_path = Path("output/dataset_health/faceforensics_bad_files.txt")
+        if bad_files_path.exists():
+            try:
+                with open(bad_files_path, "r", encoding="utf-8") as f:
+                    bad_files = {line.strip() for line in f if line.strip()}
+                if bad_files:
+                    before_count = len(self.samples)
+                    self.samples = [
+                        s for s in self.samples
+                        if Path(s.video_path).resolve().as_posix() not in {Path(b).resolve().as_posix() for b in bad_files}
+                    ]
+                    removed = before_count - len(self.samples)
+                    if removed > 0:
+                        logger.info(f"Integrity check: filtered out {removed} corrupt videos from {self.split} loading.")
+            except Exception as e:
+                logger.warning(f"Failed to read bad files log: {e}")
+
+        if flat_real.exists():
             # Sort and shuffle deterministically to ensure consistent partitioning
             self.samples.sort(key=lambda s: s.video_path)
             import random
@@ -103,8 +125,7 @@ class FaceForensicsDataset(BaseDeepfakeDataset):
                 
             for s in self.samples:
                 s.split = self.split
-        else:
-            logger.warning(f"FF++ directory structure not recognised at {self.root_dir}")
+
 
     def _load_standard(self, real_dir: Path) -> None:
         """Load from official FF++ hierarchy: original_sequences/youtube/c23/videos/."""

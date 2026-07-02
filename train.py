@@ -211,6 +211,7 @@ def train_one_epoch(
     fake_weight: Optional[torch.Tensor] = None,
     scheduler = None,
     use_bf16: bool = False,
+    visual_only: bool = False,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -224,6 +225,9 @@ def train_one_epoch(
             logger.warning(f"All samples failed in batch {batch_idx+1}; skipping batch.")
             continue
         audio = batch["audio"].to(device)
+        if visual_only:
+            audio = torch.zeros_like(audio)
+
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
         labels = batch["label"].to(device)
@@ -356,6 +360,7 @@ def validate(
     device: torch.device,
     config: TrainingConfig,
     use_bf16: bool = False,
+    visual_only: bool = False,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     Validate the model.
@@ -375,9 +380,12 @@ def validate(
             logger.warning("All samples failed in validation batch; skipping batch.")
             continue
         audio = batch["audio"].to(device)
+        if visual_only:
+            audio = torch.zeros_like(audio)
         faces = batch["face_frames"].to(device)
         mouths = batch["mouth_rois"].to(device)
         labels = batch["label"].to(device)
+
 
         if config.use_amp and device.type == "cuda":
             dtype = torch.bfloat16 if use_bf16 else torch.float16
@@ -591,6 +599,7 @@ def train(
     model.to(device)
 
     # Optimizer
+    visual_only = bool(args and getattr(args, "visual_only", False))
     optimizer = create_optimizer(model, train_cfg)
 
     # Scheduler
@@ -722,12 +731,12 @@ def train(
         head_lr = optimizer.param_groups[1]['lr']
         logger.info(f"Epoch {epoch} start | Backbone LR={backbone_lr:.2e} | Head LR={head_lr:.2e}")
 
-        # Train
         train_losses = train_one_epoch(
             model, train_loader, optimizer, device,
             train_cfg, epoch, scaler,
             real_weight=real_weight, fake_weight=fake_weight,
-            scheduler=scheduler, use_bf16=use_bf16
+            scheduler=scheduler, use_bf16=use_bf16,
+            visual_only=visual_only
         )
 
         # Validate
@@ -735,7 +744,10 @@ def train(
         is_val_epoch = (epoch + 1) % val_every == 0 or epoch == train_cfg.max_epochs - 1
 
         if is_val_epoch:
-            val_losses, val_metrics = validate(model, val_loader, device, train_cfg, use_bf16=use_bf16)
+            val_losses, val_metrics = validate(
+                model, val_loader, device, train_cfg,
+                use_bf16=use_bf16, visual_only=visual_only
+            )
 
             epoch_time = time.time() - epoch_start
             avg_batch_time = epoch_time / max(len(train_loader), 1)
@@ -870,6 +882,10 @@ def main():
                         help="Override config scheduler. none=constant LR after warmup.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility")
+    parser.add_argument("--visual-only", action="store_true", default=False,
+                        help="Train/evaluate in visual-only mode (zero audio, disable sync losses)")
+    parser.add_argument("--disable-audio", dest="visual_only", action="store_true",
+                        help="Alias for --visual-only")
     args = parser.parse_args()
 
 
@@ -901,6 +917,11 @@ def main():
         t_cfg.scheduler = args.scheduler
     if args.num_workers is not None:
         t_cfg.num_workers = args.num_workers
+    if getattr(args, "visual_only", False):
+        t_cfg.lambda_sync = 0.0
+        t_cfg.lambda_lip = 0.0
+        t_cfg.lambda_id = 0.0
+        logger.info("Visual-only mode enabled: zeroing sync, lip, and id losses")
     if args.no_amp:
         t_cfg.use_amp = False
 
