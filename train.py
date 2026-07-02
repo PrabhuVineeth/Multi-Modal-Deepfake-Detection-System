@@ -635,41 +635,51 @@ def train(
                 f"FP={he_data.get('n_fp',0)}, FN={he_data.get('n_fn',0)}"
             )
 
-            # Resolve hard and easy indices from train_dataset
+            # Resolve hard indices from FULL base dataset (hard examples may come from val split)
             base_ds = train_dataset.dataset if isinstance(train_dataset, Subset) else train_dataset
             all_train_idx = (
                 list(train_dataset.indices) if isinstance(train_dataset, Subset)
                 else list(range(len(train_dataset)))
             )
+            all_train_idx_set = set(all_train_idx)
 
-            hard_idx  = [i for i in all_train_idx
-                         if base_ds.samples[i].video_path in hard_vpaths]
-            easy_idx  = [i for i in all_train_idx if i not in set(hard_idx)]
+            # Build vpath → index map over the full dataset
+            vpath_to_idx = {base_ds.samples[i].video_path: i for i in range(len(base_ds.samples))}
+
+            # Hard indices: look up globally, include all found (even if from val/test)
+            hard_idx = [vpath_to_idx[vp] for vp in hard_vpaths if vp in vpath_to_idx]
+            hard_idx_set = set(hard_idx)
+
+            # Easy indices: ONLY from original training split (no leakage from test)
+            easy_idx = [i for i in all_train_idx if i not in hard_idx_set]
 
             # Balance: easy sample = 2× hard count (configurable)
             easy_multiplier = getattr(args, "hard_easy_ratio", 2)
             n_easy_sample = min(len(easy_idx), len(hard_idx) * easy_multiplier)
             _random.seed(42)
-            easy_sampled = _random.sample(easy_idx, n_easy_sample)
+            easy_sampled = _random.sample(easy_idx, n_easy_sample) if n_easy_sample > 0 else []
 
             combined_idx = hard_idx + easy_sampled
-            _random.shuffle(combined_idx)
-            train_dataset = Subset(base_ds, combined_idx)
+            if not combined_idx:
+                logger.warning("Hard-example injection produced 0 samples; falling back to full train_dataset.")
+            else:
+                _random.shuffle(combined_idx)
+                train_dataset = Subset(base_ds, combined_idx)
 
-            # Recompute labels/counts for the new subset
-            train_labels = [base_ds.samples[i].label for i in combined_idx]
-            n_real = sum(1 for l in train_labels if l == 0)
-            n_fake = sum(1 for l in train_labels if l == 1)
-            n_real_safe = max(n_real, 1)
-            n_fake_safe = max(n_fake, 1)
-            raw_weight = n_fake_safe / n_real_safe
-            real_weight = torch.tensor(min(raw_weight, 3.0), dtype=torch.float32).to(device)
+                # Recompute labels/counts for the new subset
+                train_labels = [base_ds.samples[i].label for i in combined_idx]
+                n_real = sum(1 for l in train_labels if l == 0)
+                n_fake = sum(1 for l in train_labels if l == 1)
+                n_real_safe = max(n_real, 1)
+                n_fake_safe = max(n_fake, 1)
+                raw_weight = n_fake_safe / n_real_safe
+                real_weight = torch.tensor(min(raw_weight, 3.0), dtype=torch.float32).to(device)
 
-            logger.info(
-                f"Hard-example training subset: {len(combined_idx)} samples "
-                f"(hard={len(hard_idx)}, easy={n_easy_sample}) | "
-                f"real={n_real}, fake={n_fake}"
-            )
+                logger.info(
+                    f"Hard-example training subset: {len(combined_idx)} samples "
+                    f"(hard={len(hard_idx)}, easy={n_easy_sample}) | "
+                    f"real={n_real}, fake={n_fake}"
+                )
 
     # Optional WeightedRandomSampler (--balanced-sampler flag)
     use_balanced_sampler = bool(args and getattr(args, "balanced_sampler", False))
