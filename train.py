@@ -34,7 +34,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from loguru import logger
 
 from config import (
@@ -67,6 +67,56 @@ def forensic_collate_fn(batch):
         else:
             result[k] = default_collate([d[k] for d in batch])
     return result
+
+
+def focal_loss_with_logits(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    gamma: float = 2.0,
+    alpha: Optional[float] = None,
+    weight: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Binary Focal Loss computed from raw logits.
+
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+
+    Uses BCEWithLogits for numerical stability (no sigmoid + BCE separately).
+
+    Args:
+        logits:  Raw model logits [B] or [B, 1].
+        targets: Binary labels [B], float (0.0 or 1.0).
+        gamma:   Focusing exponent. 0 → standard BCE.
+        alpha:   Optional scalar balance weight for the positive class.
+                 None → no alpha balancing (plain focal only).
+        weight:  Optional per-sample weight tensor [B] (e.g. from class-weight re-weighting).
+
+    Returns:
+        Scalar mean focal loss.
+    """
+    # Standard BCE with logits (per-sample, no reduction)
+    bce = F.binary_cross_entropy_with_logits(
+        logits, targets, reduction="none"
+    )
+
+    # Compute p_t = sigmoid(logit) when y=1, else 1 - sigmoid(logit)
+    p_t = torch.sigmoid(logits) * targets + (1 - torch.sigmoid(logits)) * (1 - targets)
+
+    # Focal modulation: (1 - p_t)^gamma
+    focal_weight = (1.0 - p_t).pow(gamma)
+
+    loss = focal_weight * bce
+
+    # Optional alpha balancing
+    if alpha is not None:
+        alpha_t = alpha * targets + (1.0 - alpha) * (1.0 - targets)
+        loss = alpha_t * loss
+
+    # Optional per-sample weight (from class imbalance re-weighting)
+    if weight is not None:
+        loss = loss * weight
+
+    return loss.mean()
 
 
 def create_optimizer(
@@ -118,6 +168,9 @@ def compute_multitask_loss(
     boundary_tags: Optional[torch.Tensor],
     config: TrainingConfig,
     weight: Optional[torch.Tensor] = None,
+    use_focal: bool = False,
+    focal_gamma: float = 2.0,
+    focal_alpha: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute the multi-task loss.
@@ -141,10 +194,18 @@ def compute_multitask_loss(
     # Clamp logits to prevent exponential overflow in FP16/FP32
     logits = torch.clamp(logits, min=-15.0, max=15.0)
 
-    # 1. Classification loss (BCE with logits)
-    cls_loss = F.binary_cross_entropy_with_logits(
-        logits, labels, weight=weight_fp32
-    )
+    # 1. Classification loss (BCE with logits, or Focal loss)
+    if use_focal:
+        cls_loss = focal_loss_with_logits(
+            logits, labels,
+            gamma=focal_gamma,
+            alpha=focal_alpha,
+            weight=weight_fp32,
+        )
+    else:
+        cls_loss = F.binary_cross_entropy_with_logits(
+            logits, labels, weight=weight_fp32
+        )
 
     # 2. Lip sync loss
     lip_target = labels.unsqueeze(-1)  # FAKE=1 → high score
@@ -212,6 +273,9 @@ def train_one_epoch(
     scheduler = None,
     use_bf16: bool = False,
     visual_only: bool = False,
+    use_focal: bool = False,
+    focal_gamma: float = 2.0,
+    focal_alpha: Optional[float] = None,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -262,7 +326,8 @@ def train_one_epoch(
                     continue
                     
                 loss, loss_dict = compute_multitask_loss(
-                    output, labels, boundary_tags, config, weight=sample_weights
+                    output, labels, boundary_tags, config, weight=sample_weights,
+                    use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
                 )
                 
                 # NaN Guard: Check loss
@@ -285,7 +350,8 @@ def train_one_epoch(
                 continue
                 
             loss, loss_dict = compute_multitask_loss(
-                output, labels, boundary_tags, config, weight=sample_weights
+                output, labels, boundary_tags, config, weight=sample_weights,
+                use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
             )
             
             # NaN Guard: Check loss
@@ -549,23 +615,53 @@ def train(
     fake_weight = torch.tensor(1.0, dtype=torch.float32).to(device)
     logger.info(f"Per-sample weights: Real={real_weight.item():.2f}x, Fake=1.0x")
 
-    # Add WeightedRandomSampler to training DataLoader
-    from torch.utils.data import WeightedRandomSampler
-    
-    class_counts = [n_real_safe, n_fake_safe]
-    sampler_weights = [1.0 / class_counts[int(l)] for l in train_labels]
-    sampler_weights = torch.tensor(sampler_weights, dtype=torch.float32)
-    sampler = WeightedRandomSampler(sampler_weights, num_samples=len(sampler_weights), replacement=True)
-    
     logger.info(f"Auto-computed training split label counts: real={n_real}, fake={n_fake}")
 
-    # Data loaders (use sampler instead of shuffle=True)
-    train_loader = DataLoader(
-        train_dataset,
-        sampler=sampler,
-        drop_last=True,
-        **loader_kwargs
-    )
+    # Optional WeightedRandomSampler (--balanced-sampler flag)
+    use_balanced_sampler = bool(args and getattr(args, "balanced_sampler", False))
+    sampler = None
+    if use_balanced_sampler:
+        class_counts = [n_real_safe, n_fake_safe]
+        sampler_weights_list = [1.0 / class_counts[int(l)] for l in train_labels]
+        sampler_weights_tensor = torch.tensor(sampler_weights_list, dtype=torch.float32)
+        sampler = WeightedRandomSampler(
+            sampler_weights_tensor, num_samples=len(sampler_weights_tensor), replacement=True
+        )
+        logger.info(
+            f"Balanced sampler ENABLED | class_counts=[real={n_real_safe}, fake={n_fake_safe}] "
+            f"| sampler_weight[real]={1.0/n_real_safe:.6f}, sampler_weight[fake]={1.0/n_fake_safe:.6f}"
+        )
+    else:
+        logger.info("Balanced sampler DISABLED (using shuffle=True). Pass --balanced-sampler to enable.")
+
+    # Focal loss configuration
+    use_focal = bool(args and getattr(args, "focal_loss", False))
+    focal_gamma = float(getattr(args, "focal_gamma", 2.0)) if args else 2.0
+    focal_alpha = getattr(args, "focal_alpha", None) if args else None
+    if use_focal:
+        logger.info(
+            f"Focal loss ENABLED | gamma={focal_gamma:.2f} | "
+            f"alpha={'%.4f' % focal_alpha if focal_alpha is not None else 'None (no alpha balancing)'}"
+        )
+    else:
+        logger.info("Focal loss DISABLED (using standard BCE). Pass --focal-loss to enable.")
+
+    # Data loaders
+    if sampler is not None:
+        # sampler is mutually exclusive with shuffle
+        train_loader = DataLoader(
+            train_dataset,
+            sampler=sampler,
+            drop_last=True,
+            **loader_kwargs
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            shuffle=True,
+            drop_last=True,
+            **loader_kwargs
+        )
     # Subsetting validation dataset if max_val_samples is specified
     if args and hasattr(args, "max_val_samples") and args.max_val_samples is not None:
         if isinstance(val_dataset, Subset):
@@ -736,7 +832,10 @@ def train(
             train_cfg, epoch, scaler,
             real_weight=real_weight, fake_weight=fake_weight,
             scheduler=scheduler, use_bf16=use_bf16,
-            visual_only=visual_only
+            visual_only=visual_only,
+            use_focal=use_focal,
+            focal_gamma=focal_gamma,
+            focal_alpha=focal_alpha,
         )
 
         # Validate
@@ -886,6 +985,14 @@ def main():
                         help="Train/evaluate in visual-only mode (zero audio, disable sync losses)")
     parser.add_argument("--disable-audio", dest="visual_only", action="store_true",
                         help="Alias for --visual-only")
+    parser.add_argument("--balanced-sampler", action="store_true", default=False,
+                        help="Enable WeightedRandomSampler to balance class 0/1 training batches")
+    parser.add_argument("--focal-loss", action="store_true", default=False,
+                        help="Replace BCE classification loss with Binary Focal Loss")
+    parser.add_argument("--focal-gamma", type=float, default=2.0,
+                        help="Focal loss focusing exponent gamma (default: 2.0)")
+    parser.add_argument("--focal-alpha", type=float, default=None,
+                        help="Focal loss alpha for positive class (optional, e.g. 0.25). None=disabled.")
     args = parser.parse_args()
 
 
