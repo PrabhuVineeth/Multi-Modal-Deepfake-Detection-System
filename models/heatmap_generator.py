@@ -102,8 +102,9 @@ class CrossModalHeatmapGenerator:
         h, w = frame.shape[:2]
         intensity = np.zeros((h, w), dtype=np.uint8)
 
-        # Decide what region to highlight (mouth vs whole face vs global/none)
-        highlight_region = "none"
+        # Decide what regions to highlight (mouth vs whole face vs both)
+        highlight_lips = False
+        highlight_face = False
         if detection and len(detection) > 0 and anomaly_score > 0.05:
             lip_score = 0.0
             id_score = 0.0
@@ -111,17 +112,29 @@ class CrossModalHeatmapGenerator:
                 lip_score = report_scores.get("lip_sync", 0.0)
                 id_score = report_scores.get("identity", 0.0)
             
-            # If lip score is dominant and above 0.35, target the lips region
-            if lip_score > id_score and lip_score > 0.35:
-                highlight_region = "lips"
+            # If both are above 0.35, highlight both regions
+            if lip_score > 0.35 and id_score > 0.35:
+                highlight_lips = True
+                highlight_face = True
+            elif lip_score > id_score and lip_score > 0.35:
+                highlight_lips = True
             elif max(lip_score, id_score) > 0.35:
-                highlight_region = "face"
+                highlight_face = True
 
-        # Apply spatial mapping
-        if highlight_region == "lips":
+        # Apply face spatial mapping first (wider region)
+        if highlight_face:
+            face = detection[0]
+            if hasattr(face, "bbox") and face.bbox is not None and len(face.bbox) >= 4:
+                fx1 = max(0, int(face.bbox[0]))
+                fy1 = max(0, int(face.bbox[1]))
+                fx2 = min(w - 1, int(face.bbox[2]))
+                fy2 = min(h - 1, int(face.bbox[3]))
+                intensity[fy1:fy2, fx1:fx2] = int(anomaly_score * 200)
+
+        # Apply lip spatial mapping (superimposed highlight)
+        if highlight_lips:
             face = detection[0]
             if hasattr(face, "landmarks") and face.landmarks is not None and len(face.landmarks) >= 5:
-                # 3 and 4 are left/right corners of mouth
                 l_mouth = face.landmarks[3]
                 r_mouth = face.landmarks[4]
                 cx = (l_mouth[0] + r_mouth[0]) / 2.0
@@ -134,21 +147,10 @@ class CrossModalHeatmapGenerator:
                 ly2 = min(h - 1, int(cy + mw * 0.5))
                 
                 intensity[ly1:ly2, lx1:lx2] = int(anomaly_score * 255)
-                # Soften borders with Gaussian blur
-                intensity = cv2.GaussianBlur(intensity, (15, 15), 0)
-        elif highlight_region == "face":
-            face = detection[0]
-            if hasattr(face, "bbox") and face.bbox is not None and len(face.bbox) >= 4:
-                fx1 = max(0, int(face.bbox[0]))
-                fy1 = max(0, int(face.bbox[1]))
-                fx2 = min(w - 1, int(face.bbox[2]))
-                fy2 = min(h - 1, int(face.bbox[3]))
-                
-                intensity[fy1:fy2, fx1:fx2] = int(anomaly_score * 255)
-                intensity = cv2.GaussianBlur(intensity, (25, 25), 0)
-        else:
-            # For real or unlocalized frames, keep overlay zeroed
-            pass
+
+        # Soften borders with Gaussian blur
+        if highlight_lips or highlight_face:
+            intensity = cv2.GaussianBlur(intensity, (21, 21), 0)
 
         # Apply colormap
         heatmap = cv2.applyColorMap(intensity, self.colormap)
@@ -159,8 +161,17 @@ class CrossModalHeatmapGenerator:
         effective_alpha = self.alpha * mask
         blended = (frame.astype(float) * (1.0 - effective_alpha) + heatmap.astype(float) * effective_alpha).astype(np.uint8)
 
-        # Draw attention box
-        if highlight_region == "lips":
+        # Draw attention boxes on blended image
+        if highlight_face:
+            face = detection[0]
+            fx1 = max(0, int(face.bbox[0]))
+            fy1 = max(0, int(face.bbox[1]))
+            fx2 = min(w - 1, int(face.bbox[2]))
+            fy2 = min(h - 1, int(face.bbox[3]))
+            cv2.rectangle(blended, (fx1, fy1), (fx2, fy2), (0, 0, 255), 2)
+            cv2.putText(blended, "FACE SWAPPED", (fx1, max(15, fy1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+
+        if highlight_lips:
             face = detection[0]
             l_mouth = face.landmarks[3]
             r_mouth = face.landmarks[4]
@@ -171,16 +182,9 @@ class CrossModalHeatmapGenerator:
             ly1 = max(0, int(cy - mw * 0.5))
             lx2 = min(w - 1, int(cx + mw * 0.8))
             ly2 = min(h - 1, int(cy + mw * 0.5))
-            cv2.rectangle(blended, (lx1, ly1), (lx2, ly2), (0, 0, 255), 2)
-            cv2.putText(blended, "LIPS MANIPULATED", (lx1, max(15, ly1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
-        elif highlight_region == "face":
-            face = detection[0]
-            fx1 = max(0, int(face.bbox[0]))
-            fy1 = max(0, int(face.bbox[1]))
-            fx2 = min(w - 1, int(face.bbox[2]))
-            fy2 = min(h - 1, int(face.bbox[3]))
-            cv2.rectangle(blended, (fx1, fy1), (fx2, fy2), (0, 0, 255), 2)
-            cv2.putText(blended, "FACE SWAPPED", (fx1, max(15, fy1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+            box_color = (0, 255, 255) if highlight_face else (0, 0, 255)
+            cv2.rectangle(blended, (lx1, ly1), (lx2, ly2), box_color, 2)
+            cv2.putText(blended, "LIPS MANIPULATED", (lx1, max(15, ly1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1)
 
         # Add score text
         score_text = f"F#{frame_idx:02d} Anomaly: {anomaly_score:.4f}"
