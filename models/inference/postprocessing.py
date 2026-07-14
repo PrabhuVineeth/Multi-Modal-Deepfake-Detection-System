@@ -135,10 +135,12 @@ class PostProcessor:
         prob = self._to_float(forensic_output.probability)
         report.raw_probability = prob
         report.classification = "FAKE" if prob >= self.threshold else "REAL"
-        report.confidence = (
-            prob * 100 if report.classification == "FAKE"
-            else (1 - prob) * 100
-        )
+        
+        # Calibrate confidence relative to the decision threshold
+        if report.classification == "FAKE":
+            report.confidence = 50.0 + 50.0 * (prob - self.threshold) / (1.0 - self.threshold + 1e-6)
+        else:
+            report.confidence = 50.0 + 50.0 * (self.threshold - prob) / (self.threshold + 1e-6)
 
         # Per-analyzer scores
         report.lip_sync_score = self._to_float(forensic_output.lip_sync_score)
@@ -164,11 +166,9 @@ class PostProcessor:
                 scores = scores[0]  # First batch element
             raw_scores = scores.flatten().tolist()
             
-            # Calibrate frame scores relative to the global video prediction.
-            # If the overall video probability is below threshold (REAL), scale down
-            # the frame scores proportionally to prevent false-alarm red blocks on real videos.
-            factor = min(1.0, prob / self.threshold) if prob < self.threshold else 1.0
-            report.frame_anomaly_scores = [float(s * factor) for s in raw_scores]
+            # Calibrate frame scores by multiplying them directly by the global deepfake probability.
+            # If the overall video probability is low, all frame scores scale down to reflect the overall real status.
+            report.frame_anomaly_scores = [float(s * prob) for s in raw_scores]
 
         # Temporal boundaries from TFBD
         if forensic_output.boundary_tags is not None and timestamps:
