@@ -575,6 +575,15 @@ export default function App() {
               <div className="card-content">
                 <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '1.2rem' }}>
                   Visualization of synthetic markers across the video duration. Hover over blocks to inspect frame anomaly scores.
+                  <span style={{ 
+                    display: 'block', 
+                    marginTop: '0.4rem', 
+                    color: 'var(--yellow)', 
+                    fontWeight: 'bold',
+                    fontSize: '0.72rem' 
+                  }}>
+                    💡 Sequence Analysis: Trimmed to the first 64 frames (first {analysisResult.duration?.toFixed(2)}s) as configured by PreprocessConfig.max_frames for standard batch processing.
+                  </span>
                 </div>
                 
                 {/* Visual timeline bar */}
