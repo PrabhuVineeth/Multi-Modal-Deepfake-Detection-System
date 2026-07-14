@@ -234,7 +234,13 @@ class ForensicInferencePipeline:
                     if idx < len(preprocessed.frames):
                         frame = preprocessed.frames[idx]
                         score = scores[idx]
-                        overlay = self.heatmap_generator._create_overlay(frame, score)
+                        detection = preprocessed.face_detections[idx] if idx < len(preprocessed.face_detections) else None
+                        overlay = self.heatmap_generator._create_overlay(
+                            frame,
+                            score,
+                            detection=detection,
+                            report_scores=report.to_dict()["scores"]
+                        )
                         key_frames.append(overlay)
                         
             report_paths = generator.generate(report, key_frames=key_frames, output_dir=str(output_path))
@@ -248,6 +254,8 @@ class ForensicInferencePipeline:
                     preprocessed.frames,
                     report.frame_anomaly_scores,
                     heatmap_path,
+                    face_detections=preprocessed.face_detections,
+                    report_scores=report.to_dict()["scores"]
                 )
 
         logger.info(

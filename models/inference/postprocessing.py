@@ -162,7 +162,13 @@ class PostProcessor:
             scores = combined.detach().cpu().numpy()
             if scores.ndim > 2:
                 scores = scores[0]  # First batch element
-            report.frame_anomaly_scores = scores.flatten().tolist()
+            raw_scores = scores.flatten().tolist()
+            
+            # Calibrate frame scores relative to the global video prediction.
+            # If the overall video probability is below threshold (REAL), scale down
+            # the frame scores proportionally to prevent false-alarm red blocks on real videos.
+            factor = min(1.0, prob / self.threshold) if prob < self.threshold else 1.0
+            report.frame_anomaly_scores = [float(s * factor) for s in raw_scores]
 
         # Temporal boundaries from TFBD
         if forensic_output.boundary_tags is not None and timestamps:

@@ -495,6 +495,31 @@ export default function App() {
               <div style={{ fontSize: '0.78rem', marginTop: '0.5rem', opacity: 0.8 }}>
                 {analysisResult.classification.toLowerCase() === 'real' ? '✅ Normal speech & face structures detected' : '⚠️ Anomalous synthetic manipulation detected'}
               </div>
+              <div style={{ marginTop: '1.2rem', display: 'flex', gap: '0.8rem' }}>
+                <button 
+                  className="nav-item" 
+                  style={{ 
+                    fontSize: '0.75rem', 
+                    padding: '0.4rem 0.8rem', 
+                    background: 'var(--border)', 
+                    color: 'var(--text)',
+                    borderColor: 'var(--border)',
+                    boxShadow: 'none',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(analysisResult, null, 2));
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.setAttribute("href", dataStr);
+                    downloadAnchor.setAttribute("download", `mdds_forensic_report_${analysisResult.report_id}.json`);
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                  }}
+                >
+                  📥 DOWNLOAD REPORT (JSON)
+                </button>
+              </div>
             </div>
 
             {/* ── Component Anomaly Breakdown ── */}

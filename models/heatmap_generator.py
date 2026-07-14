@@ -53,25 +53,28 @@ class CrossModalHeatmapGenerator:
         frames: List[np.ndarray],
         anomaly_scores: List[float],
         mismatch_maps: Optional[Dict[str, List[float]]] = None,
+        face_detections: Optional[List[List[Any]]] = None,
+        report_scores: Optional[Dict[str, float]] = None,
     ) -> List[np.ndarray]:
         """
-        Generate heatmap overlay frames.
+        Generate heatmap overlay frames with spatial landmarks highlighting.
 
         Args:
             frames: List of BGR frame arrays (original video frames).
             anomaly_scores: Per-frame combined anomaly scores [0, 1].
             mismatch_maps: Optional per-channel scores for multi-layer heatmaps.
-                Keys: 'lip_sync', 'identity', 'temporal', 'av_sync'.
-                Values: List of per-frame scores [0, 1].
+            face_detections: List of face detections per frame.
+            report_scores: Dict of components' scores.
 
         Returns:
             List of BGR frames with heatmap overlays.
         """
-        logger.info(f"Generating heatmap overlays for {len(frames)} frames")
+        logger.info(f"Generating spatial-aware heatmap overlays for {len(frames)} frames")
 
         heatmap_frames = []
         for i, (frame, score) in enumerate(zip(frames, anomaly_scores)):
-            overlay = self._create_overlay(frame, score)
+            detection = face_detections[i] if face_detections and i < len(face_detections) else None
+            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores)
             heatmap_frames.append(overlay)
 
         return heatmap_frames
@@ -80,33 +83,107 @@ class CrossModalHeatmapGenerator:
         self,
         frame: np.ndarray,
         anomaly_score: float,
+        detection: Optional[List[Any]] = None,
+        report_scores: Optional[Dict[str, float]] = None,
     ) -> np.ndarray:
         """
-        Create a single heatmap overlay on a frame.
+        Create a single heatmap overlay highlighting only the manipulated area.
 
         Args:
             frame: BGR frame array.
             anomaly_score: Anomaly intensity [0, 1].
+            detection: Optional list of FaceDetection objects for this frame.
+            report_scores: Optional overall scores dictionary.
 
         Returns:
-            BGR frame with colored overlay.
+            BGR frame with colored overlay and focus guide box.
         """
         h, w = frame.shape[:2]
+        intensity = np.zeros((h, w), dtype=np.uint8)
 
-        # Create a uniform intensity map (can be spatial in future)
-        intensity = np.full((h, w), int(anomaly_score * 255), dtype=np.uint8)
+        # Decide what region to highlight (mouth vs whole face vs global/none)
+        highlight_region = "none"
+        if detection and len(detection) > 0 and anomaly_score > 0.05:
+            lip_score = 0.0
+            id_score = 0.0
+            if report_scores:
+                lip_score = report_scores.get("lip_sync", 0.0)
+                id_score = report_scores.get("identity", 0.0)
+            
+            # If lip score is dominant and above 0.35, target the lips region
+            if lip_score > id_score and lip_score > 0.35:
+                highlight_region = "lips"
+            elif max(lip_score, id_score) > 0.35:
+                highlight_region = "face"
+
+        # Apply spatial mapping
+        if highlight_region == "lips":
+            face = detection[0]
+            if hasattr(face, "landmarks") and face.landmarks is not None and len(face.landmarks) >= 5:
+                # 3 and 4 are left/right corners of mouth
+                l_mouth = face.landmarks[3]
+                r_mouth = face.landmarks[4]
+                cx = (l_mouth[0] + r_mouth[0]) / 2.0
+                cy = (l_mouth[1] + r_mouth[1]) / 2.0
+                mw = abs(r_mouth[0] - l_mouth[0])
+                
+                lx1 = max(0, int(cx - mw * 0.8))
+                ly1 = max(0, int(cy - mw * 0.5))
+                lx2 = min(w - 1, int(cx + mw * 0.8))
+                ly2 = min(h - 1, int(cy + mw * 0.5))
+                
+                intensity[ly1:ly2, lx1:lx2] = int(anomaly_score * 255)
+                # Soften borders with Gaussian blur
+                intensity = cv2.GaussianBlur(intensity, (15, 15), 0)
+        elif highlight_region == "face":
+            face = detection[0]
+            if hasattr(face, "bbox") and face.bbox is not None and len(face.bbox) >= 4:
+                fx1 = max(0, int(face.bbox[0]))
+                fy1 = max(0, int(face.bbox[1]))
+                fx2 = min(w - 1, int(face.bbox[2]))
+                fy2 = min(h - 1, int(face.bbox[3]))
+                
+                intensity[fy1:fy2, fx1:fx2] = int(anomaly_score * 255)
+                intensity = cv2.GaussianBlur(intensity, (25, 25), 0)
+        else:
+            # For real or unlocalized frames, keep overlay zeroed
+            pass
 
         # Apply colormap
         heatmap = cv2.applyColorMap(intensity, self.colormap)
 
-        # Blend with original frame
-        # More anomalous → more overlay; less anomalous → more original
-        effective_alpha = self.alpha * anomaly_score
-        blended = cv2.addWeighted(frame, 1 - effective_alpha, heatmap, effective_alpha, 0)
+        # Alpha blend with original frame
+        mask = intensity.astype(float) / 255.0
+        mask = mask[:, :, np.newaxis]  # [H, W, 1]
+        effective_alpha = self.alpha * mask
+        blended = (frame.astype(float) * (1.0 - effective_alpha) + heatmap.astype(float) * effective_alpha).astype(np.uint8)
+
+        # Draw attention box
+        if highlight_region == "lips":
+            face = detection[0]
+            l_mouth = face.landmarks[3]
+            r_mouth = face.landmarks[4]
+            cx = (l_mouth[0] + r_mouth[0]) / 2.0
+            cy = (l_mouth[1] + r_mouth[1]) / 2.0
+            mw = abs(r_mouth[0] - l_mouth[0])
+            lx1 = max(0, int(cx - mw * 0.8))
+            ly1 = max(0, int(cy - mw * 0.5))
+            lx2 = min(w - 1, int(cx + mw * 0.8))
+            ly2 = min(h - 1, int(cy + mw * 0.5))
+            cv2.rectangle(blended, (lx1, ly1), (lx2, ly2), (0, 0, 255), 2)
+            cv2.putText(blended, "LIPS MANIPULATED", (lx1, max(15, ly1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+        elif highlight_region == "face":
+            face = detection[0]
+            fx1 = max(0, int(face.bbox[0]))
+            fy1 = max(0, int(face.bbox[1]))
+            fx2 = min(w - 1, int(face.bbox[2]))
+            fy2 = min(h - 1, int(face.bbox[3]))
+            cv2.rectangle(blended, (fx1, fy1), (fx2, fy2), (0, 0, 255), 2)
+            cv2.putText(blended, "FACE SWAPPED", (fx1, max(15, fy1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
         # Add score text
         score_text = f"Anomaly: {anomaly_score:.2f}"
-        color = (0, 0, 255) if anomaly_score > 0.5 else (0, 255, 0)
+        color = (0, 0, 255) if anomaly_score > 0.44 else (0, 255, 0)
         cv2.putText(
             blended, score_text, (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2,
@@ -120,23 +197,33 @@ class CrossModalHeatmapGenerator:
         anomaly_scores: List[float],
         output_path: str,
         mismatch_maps: Optional[Dict[str, List[float]]] = None,
+        face_detections: Optional[List[List[Any]]] = None,
+        report_scores: Optional[Dict[str, float]] = None,
     ) -> str:
         """
-        Generate and save a heatmap overlay video.
+        Generate and save a spatial-aware heatmap overlay video.
 
         Args:
             frames: Original video frames.
             anomaly_scores: Per-frame anomaly scores.
             output_path: Path to save the output MP4.
             mismatch_maps: Optional multi-channel scores.
+            face_detections: Optional face coordinates.
+            report_scores: Optional components' scores.
 
         Returns:
             Path to the saved video.
         """
-        logger.info(f"Generating heatmap video: {output_path}")
+        logger.info(f"Generating spatial heatmap video: {output_path}")
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-        heatmap_frames = self.generate(frames, anomaly_scores, mismatch_maps)
+        heatmap_frames = self.generate(
+            frames,
+            anomaly_scores,
+            mismatch_maps,
+            face_detections=face_detections,
+            report_scores=report_scores
+        )
 
         if not heatmap_frames:
             logger.warning("No frames to write")
