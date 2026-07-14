@@ -96,8 +96,8 @@ class ForensicInferencePipeline:
                 "visual_only": True,
             },
             "lavdf": {
-                "checkpoint": "checkpoints/best_model_lavdf_full.pth",
-                "threshold": 0.40,
+                "checkpoint": "checkpoints/best_model_lavdf_full_tuned.pth",
+                "threshold": 0.44,
                 "visual_only": False,
             },
         }
