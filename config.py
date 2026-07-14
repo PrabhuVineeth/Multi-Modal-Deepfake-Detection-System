@@ -34,6 +34,7 @@ class ModelConfig:
     # Evidence aggregation
     evidence_dim: int = 128
     num_evidence_heads: int = 4
+    use_temporal_attention: bool = False
 
     # TFBD (Temporal Forgery Boundary Detector)
     tfbd_num_tags: int = 3              # REAL=0, FAKE=1, BOUNDARY=2

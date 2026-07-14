@@ -91,6 +91,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--use-cache", action="store_true", default=True)
     parser.add_argument("--cache-dir", default="output/cache_full")
+    parser.add_argument("--max-samples", type=int, default=None, help="Max samples to evaluate")
     args = parser.parse_args()
     
     output_path = Path(args.output_dir)
@@ -109,6 +110,17 @@ def main():
         args.data_root, split="test",
         use_cache=args.use_cache, cache_dir=args.cache_dir
     )
+    
+    if args.max_samples is not None and args.max_samples > 0:
+        from torch.utils.data import Subset
+        import random
+        indices = list(range(len(ds)))
+        random.seed(42)
+        random.sample(indices, min(len(indices), args.max_samples)) # dry run to match seed
+        indices = indices[:args.max_samples]
+        ds = Subset(ds, indices)
+        logger.info(f"Subsetting calibration dataset to max_samples: {len(ds)}")
+
     loader = DataLoader(
         ds, batch_size=args.batch_size, shuffle=False,
         collate_fn=forensic_collate_fn

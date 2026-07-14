@@ -128,6 +128,7 @@ class DeepfakeForensicModel(nn.Module):
             fusion_dim=self.config.fusion_hidden_dim,
             num_heads=self.config.num_evidence_heads,
             dropout=self.config.analyzer_dropout,
+            use_temporal_attention=getattr(self.config, "use_temporal_attention", False),
         )
 
         # ── Mismatch Localization ──

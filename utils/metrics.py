@@ -214,7 +214,7 @@ def select_performance_metrics(
     iou: float = 0.0,
     mte: float = 0.0,
 ) -> Dict[str, float]:
-    """Return only the seven requested performance metrics."""
+    """Return only the requested performance metrics including EER."""
     return {
         "accuracy": metrics.get("accuracy", 0.0),
         "precision": metrics.get("precision", 0.0),
@@ -223,6 +223,8 @@ def select_performance_metrics(
         "iou": iou,
         "mean_timestamp_error": mte,
         "ece": metrics.get("ece", 0.0),
+        "eer": metrics.get("eer", 0.0),
+        "eer_threshold": metrics.get("eer_threshold", 0.50),
     }
 
 

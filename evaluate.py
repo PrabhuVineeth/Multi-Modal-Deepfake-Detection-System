@@ -186,7 +186,8 @@ def evaluate(
             f"  {name} (T=0.50): Acc={metrics.get('accuracy', 0):.4f} | "
             f"Precision={metrics.get('precision', 0):.4f} | "
             f"Recall={metrics.get('recall', 0):.4f} | "
-            f"F1={metrics.get('f1_score', 0):.4f}"
+            f"F1={metrics.get('f1_score', 0):.4f} | "
+            f"EER={metrics.get('eer', 0):.4f} (at T={metrics.get('eer_threshold', 0.5):.2f})"
         )
 
         m_050 = compute_metrics_at_t(labels, scores, 0.50)
@@ -230,11 +231,11 @@ def evaluate(
     )
 
     # Print summary table
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 90)
     print("EVALUATION SUMMARY")
-    print("=" * 80)
-    print(f"{'Dataset':<16} {'Acc':>7} {'Prec':>7} {'Recall':>7} {'F1':>7} {'IoU':>7} {'MTE':>7} {'ECE':>7}")
-    print("-" * 80)
+    print("=" * 90)
+    print(f"{'Dataset':<16} {'Acc':>7} {'Prec':>7} {'Recall':>7} {'F1':>7} {'IoU':>7} {'MTE':>7} {'ECE':>7} {'EER':>7}")
+    print("-" * 90)
     for name, result in all_results.items():
         m = result["metrics"]
         print(
@@ -245,9 +246,10 @@ def evaluate(
             f"{m.get('f1_score', 0):>7.4f} "
             f"{m.get('iou', 0):>7.4f} "
             f"{m.get('mean_timestamp_error', 0):>7.4f} "
-            f"{m.get('ece', 0):>7.4f}"
+            f"{m.get('ece', 0):>7.4f} "
+            f"{m.get('eer', 0):>7.4f}"
         )
-    print("=" * 80)
+    print("=" * 90)
 
     logger.info(f"Evaluation results saved to: {output_path}")
 

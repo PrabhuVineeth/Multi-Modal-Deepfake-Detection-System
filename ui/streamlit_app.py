@@ -54,8 +54,8 @@ DATASET_OPTIONS = {
     },
     "LAV-DF": {
         "code": "lavdf",
-        "checkpoint": "best_model_lavdf_full.pth",
-        "threshold": "0.40",
+        "checkpoint": "best_model_lavdf_full_tuned.pth",
+        "threshold": "0.44",
         "mode": "Multimodal",
         "note": "Optimized route using full LAV-DF trained model.",
     },
@@ -791,7 +791,7 @@ def render_home_page() -> None:
     st.markdown(f'<div class="section-header section-header-lime">Training Results</div>', unsafe_allow_html=True)
 
     st.markdown(
-        f'<table class="brutal-table"><thead><tr><th>Dataset</th><th>Modalities</th><th>Samples</th><th>Best AUC</th><th>Accuracy</th><th>F1-Score</th><th>Threshold</th></tr></thead><tbody><tr><td><span style="color:{NEON["cyan"]}; font-weight:700;">FakeAVCeleb</span></td><td>Audio + Video</td><td>21,566</td><td><span style="color:{NEON["lime"]};">0.913</span></td><td>94.1%</td><td>0.845</td><td>T=0.96</td></tr><tr><td><span style="color:{NEON["magenta"]}; font-weight:700;">FaceForensics++</span></td><td>Video only</td><td>7,000</td><td><span style="color:{NEON["lime"]};">0.753</span></td><td>67.5%</td><td>0.733</td><td>T=0.52</td></tr><tr><td><span style="color:{NEON["yellow"]}; font-weight:700;">LAV-DF</span></td><td>Audio + Video</td><td>36,431</td><td><span style="color:{NEON["lime"]};">0.807</span></td><td>73.1%</td><td>0.751</td><td>T=0.40</td></tr><tr style="background:{NEON["surface2"]};"><td><span style="color:{NEON["lime"]}; font-weight:700;">Combined (Joint)</span></td><td>Audio + Video</td><td>28,566</td><td><span style="color:{NEON["lime"]}; font-weight:900;">0.861</span></td><td><span style="font-weight:700;">94.1%</span></td><td><span style="font-weight:700;">0.845</span></td><td>T=0.96</td></tr></tbody></table>',
+        f'<table class="brutal-table"><thead><tr><th>Dataset</th><th>Modalities</th><th>Samples</th><th>Best AUC</th><th>Accuracy</th><th>F1-Score</th><th>Threshold</th></tr></thead><tbody><tr><td><span style="color:{NEON["cyan"]}; font-weight:700;">FakeAVCeleb</span></td><td>Audio + Video</td><td>21,566</td><td><span style="color:{NEON["lime"]};">0.913</span></td><td>94.1%</td><td>0.845</td><td>T=0.96</td></tr><tr><td><span style="color:{NEON["magenta"]}; font-weight:700;">FaceForensics++</span></td><td>Video only</td><td>7,000</td><td><span style="color:{NEON["lime"]};">0.753</span></td><td>67.5%</td><td>0.733</td><td>T=0.52</td></tr><tr><td><span style="color:{NEON["yellow"]}; font-weight:700;">LAV-DF</span></td><td>Audio + Video</td><td>36,431</td><td><span style="color:{NEON["lime"]};">0.806</span></td><td>85.2%</td><td>0.901</td><td>T=0.44</td></tr><tr style="background:{NEON["surface2"]};"><td><span style="color:{NEON["lime"]}; font-weight:700;">Combined (Joint)</span></td><td>Audio + Video</td><td>28,566</td><td><span style="color:{NEON["lime"]}; font-weight:900;">0.861</span></td><td><span style="font-weight:700;">94.1%</span></td><td><span style="font-weight:700;">0.845</span></td><td>T=0.96</td></tr></tbody></table>',
         unsafe_allow_html=True,
     )
 
