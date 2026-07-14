@@ -135,9 +135,14 @@ def auto_detect_dataset(video_path: Path, filename: str) -> str:
         return "faceforensics"
     
     filename_clean = filename.lower().strip()
-    # Check for LAV-DF indicators (explicit string or numeric identifier)
-    base_name = Path(filename_clean).stem
-    if "lavdf" in filename_clean or "lav-df" in filename_clean or base_name.isdigit():
+    full_path_clean = str(video_path).lower()
+    
+    # Check for FaceForensics indicators first
+    if "faceforensics" in filename_clean or "faceforensics" in full_path_clean or "ff++" in filename_clean or "ff++" in full_path_clean:
+        return "faceforensics"
+        
+    # Check for LAV-DF indicators in path or filename
+    if "lavdf" in filename_clean or "lav-df" in filename_clean or "lav-df" in full_path_clean or "lavdf" in full_path_clean:
         return "lavdf"
     
     # Default to fakeavceleb joint model
