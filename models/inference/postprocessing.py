@@ -181,6 +181,10 @@ class PostProcessor:
             if tags.dim() > 1:
                 tags = tags[0]  # First batch
 
+            # If the overall video is classified as REAL, override boundary tags to all REAL (0)
+            if report.classification == "REAL":
+                tags = torch.zeros_like(tags)
+
             boundaries = tfbd.extract_boundaries(tags, timestamps)
             report.boundaries = [
                 {
