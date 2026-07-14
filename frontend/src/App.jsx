@@ -114,12 +114,7 @@ export default function App() {
       
       setTimeout(() => {
         setAnalysisResult(result);
-        // Set video preview URL: blob for uploaded file, API stream for local path
-        if (selectedFile) {
-          setVideoPreviewUrl(URL.createObjectURL(selectedFile));
-        } else {
-          setVideoPreviewUrl(`http://127.0.0.1:8000/video/${result.report_id}`);
-        }
+        setVideoPreviewUrl(`http://127.0.0.1:8000/video/${result.report_id}`);
         setRecentReports((prev) => [result, ...prev]);
         setAnalyzing(false);
         setCurrentPage('results');

@@ -239,7 +239,8 @@ class ForensicInferencePipeline:
                             frame,
                             score,
                             detection=detection,
-                            report_scores=report.to_dict()["scores"]
+                            report_scores=report.to_dict()["scores"],
+                            frame_idx=idx
                         )
                         key_frames.append(overlay)
                         

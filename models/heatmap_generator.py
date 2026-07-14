@@ -7,7 +7,7 @@ them into a heatmap video.
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -74,7 +74,7 @@ class CrossModalHeatmapGenerator:
         heatmap_frames = []
         for i, (frame, score) in enumerate(zip(frames, anomaly_scores)):
             detection = face_detections[i] if face_detections and i < len(face_detections) else None
-            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores)
+            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores, frame_idx=i)
             heatmap_frames.append(overlay)
 
         return heatmap_frames
@@ -85,6 +85,7 @@ class CrossModalHeatmapGenerator:
         anomaly_score: float,
         detection: Optional[List[Any]] = None,
         report_scores: Optional[Dict[str, float]] = None,
+        frame_idx: int = 0,
     ) -> np.ndarray:
         """
         Create a single heatmap overlay highlighting only the manipulated area.
@@ -182,7 +183,7 @@ class CrossModalHeatmapGenerator:
             cv2.putText(blended, "FACE SWAPPED", (fx1, max(15, fy1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
         # Add score text
-        score_text = f"Anomaly: {anomaly_score:.2f}"
+        score_text = f"F#{frame_idx:02d} Anomaly: {anomaly_score:.4f}"
         color = (0, 0, 255) if anomaly_score > 0.44 else (0, 255, 0)
         cv2.putText(
             blended, score_text, (10, 30),
