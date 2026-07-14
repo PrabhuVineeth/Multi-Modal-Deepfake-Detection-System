@@ -43,6 +43,7 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedDataset, setSelectedDataset] = useState('auto');
   const [localPath, setLocalPath] = useState('');
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
   
   // Analysis state
   const [analyzing, setAnalyzing] = useState(false);
@@ -95,32 +96,30 @@ export default function App() {
       let response;
       if (localPath) {
         setProgressText('Requesting local file probe analysis...');
-        const url = `http://127.0.0.1:8000/analyze?dataset=${selectedDataset}&local_path=${encodeURIComponent(localPath)}`;
-        response = await fetch(url, {
-          method: 'POST',
-        });
+        const url = `http://127.0.0.1:8000/analyze/local?dataset=${selectedDataset}&local_path=${encodeURIComponent(localPath)}`;
+        response = await fetch(url, { method: 'GET' });
       } else {
         setProgressText('Uploading video to Forensic API...');
         const formData = new FormData();
         formData.append('video', selectedFile);
         const url = `http://127.0.0.1:8000/analyze?dataset=${selectedDataset}`;
-        response = await fetch(url, {
-          method: 'POST',
-          body: formData,
-        });
+        response = await fetch(url, { method: 'POST', body: formData });
       }
 
-      if (!response.ok) {
-        throw new Error(`API returned error: ${response.statusText}`);
-      }
+      if (!response.ok) throw new Error(`API returned error: ${response.statusText}`);
 
       const result = await response.json();
       setProgress(100);
       setProgressText('Analysis complete!');
       
-      // Store report and update view
       setTimeout(() => {
         setAnalysisResult(result);
+        // Set video preview URL: blob for uploaded file, API stream for local path
+        if (selectedFile) {
+          setVideoPreviewUrl(URL.createObjectURL(selectedFile));
+        } else {
+          setVideoPreviewUrl(`http://127.0.0.1:8000/video/${result.report_id}`);
+        }
         setRecentReports((prev) => [result, ...prev]);
         setAnalyzing(false);
         setCurrentPage('results');
@@ -462,15 +461,44 @@ export default function App() {
         {currentPage === 'results' && analysisResult && (
           <div>
             <div className="glitch-title">Forensic Verdict</div>
-            
+
+            {/* ── Original Video Preview ── */}
+            {videoPreviewUrl && (
+              <div style={{ marginBottom: '2.5rem' }}>
+                <div className="section-header section-header-yellow" style={{ marginBottom: '1rem' }}>Analyzed Media</div>
+                <video
+                  controls
+                  autoPlay
+                  muted
+                  loop
+                  key={videoPreviewUrl}
+                  src={videoPreviewUrl}
+                  style={{
+                    width: '100%',
+                    maxHeight: '420px',
+                    objectFit: 'contain',
+                    border: '3px solid var(--border)',
+                    boxShadow: '6px 6px 0px var(--border)',
+                    background: '#000',
+                    display: 'block',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* ── Verdict Box ── */}
             <div className={`verdict-box ${analysisResult.classification.toLowerCase() === 'real' ? 'real' : 'fake'}`}>
               <div className="verdict-title">VERDICT: {analysisResult.classification}</div>
               <div className="verdict-subtitle">
-                Model confidence: {(analysisResult.confidence * 100).toFixed(1)}% ({analysisResult.classification.toLowerCase() === 'real' ? 'Normal speech & face structures' : 'Anomalous synthetic manipulation detected'})
+                Model confidence: {Number(analysisResult.confidence).toFixed(1)}% &nbsp;|&nbsp; Processing time: {analysisResult.processing_time?.toFixed(2)}s
+              </div>
+              <div style={{ fontSize: '0.78rem', marginTop: '0.5rem', opacity: 0.8 }}>
+                {analysisResult.classification.toLowerCase() === 'real' ? '✅ Normal speech & face structures detected' : '⚠️ Anomalous synthetic manipulation detected'}
               </div>
             </div>
 
-            <div className="section-header section-header-lime">Component Anomaly Breakdown</div>
+            {/* ── Component Anomaly Breakdown ── */}
+            <div className="section-header section-header-lime">Component Anomaly Scores</div>
             <div className="brutal-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '3rem' }}>
               
               <div className="gauge-card">
@@ -505,7 +533,7 @@ export default function App() {
 
               <div className="gauge-card">
                 <div className="gauge-header">
-                  <span>Audio-Visual Sync</span>
+                  <span>AV Sync</span>
                   <span style={{ color: 'var(--yellow)' }}>{(analysisResult.scores.av_sync * 100).toFixed(0)}%</span>
                 </div>
                 <div className="gauge-track">
@@ -515,26 +543,175 @@ export default function App() {
 
             </div>
 
-            <div className="section-header">Temporal Forgery Boundaries</div>
+            {/* ── Temporal Anomaly Timeline ── */}
+            <div className="section-header">Temporal Anomaly Timeline & Flagged Segments</div>
             <div className="brutal-card" style={{ marginBottom: '3rem' }}>
-              <div className="card-title">Tagger Output: Dilated CRF Temporal boundaries</div>
-              {analysisResult.has_forgery ? (
-                <div className="card-content" style={{ color: 'var(--red)' }}>
-                  ⚠️ Boundary tags identify anomalies starting at frame {analysisResult.boundaries[0]?.[0] || 0} to frame {analysisResult.boundaries[0]?.[1] || 0}.
+              <div className="card-title">Frame-by-Frame Forensic Analysis</div>
+              <div className="card-content">
+                <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '1.2rem' }}>
+                  Visualization of synthetic markers across the video duration. Hover over blocks to inspect frame anomaly scores.
                 </div>
+                
+                {/* Visual timeline bar */}
+                {analysisResult.frame_anomaly_scores && analysisResult.frame_anomaly_scores.length > 0 ? (
+                  <div>
+                    <div style={{ 
+                      display: 'flex', 
+                      gap: '2px', 
+                      background: 'var(--border)', 
+                      padding: '4px', 
+                      border: '3px solid var(--border)', 
+                      marginBottom: '0.5rem',
+                      overflowX: 'auto'
+                    }}>
+                      {analysisResult.frame_anomaly_scores.map((score, idx) => {
+                        let color = 'var(--lime)'; // safe
+                        if (score >= 0.5) color = 'var(--red)'; // high anomaly
+                        else if (score >= 0.4) color = 'var(--yellow)'; // warning
+                        
+                        const frameTime = (idx * (analysisResult.duration || 0.0) / analysisResult.frame_anomaly_scores.length).toFixed(2);
+                        return (
+                          <div 
+                            key={idx}
+                            title={`Frame ${idx} (${frameTime}s) - Anomaly: ${(score * 100).toFixed(1)}%`}
+                            style={{
+                              flex: '1',
+                              height: '30px',
+                              minWidth: '6px',
+                              backgroundColor: color,
+                              cursor: 'pointer',
+                              transition: 'transform 0.1s ease',
+                            }}
+                            onMouseEnter={(e) => e.target.style.transform = 'scaleY(1.2)'}
+                            onMouseLeave={(e) => e.target.style.transform = 'scaleY(1.0)'}
+                          />
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Timeline labels */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--muted)', marginBottom: '1.5rem' }}>
+                      <span>0.00s (Start)</span>
+                      <span>{(analysisResult.duration || 0.0).toFixed(2)}s (End)</span>
+                    </div>
+
+                    {/* Timeline legend */}
+                    <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.72rem', marginBottom: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '0.8rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <div style={{ width: '12px', height: '12px', background: 'var(--lime)' }} />
+                        <span>Normal (&lt;40% anomaly)</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <div style={{ width: '12px', height: '12px', background: 'var(--yellow)' }} />
+                        <span>Suspicious (40%-50% anomaly)</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <div style={{ width: '12px', height: '12px', background: 'var(--red)' }} />
+                        <span>Highly Anomalous (&gt;50% anomaly)</span>
+                      </div>
+                    </div>
+
+                    {/* Identified anomalous duration ranges */}
+                    <div style={{ fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.5rem', color: 'var(--cyan)' }}>
+                      Identified Anomalous Duration Ranges:
+                    </div>
+                    <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', fontSize: '0.78rem', lineHeight: '1.6' }}>
+                      {(() => {
+                        const segments = [];
+                        const scores = analysisResult.frame_anomaly_scores;
+                        const duration = analysisResult.duration || 0;
+                        const frameTime = duration / scores.length;
+                        let start = -1;
+                        for (let i = 0; i < scores.length; i++) {
+                          if (scores[i] >= 0.44) {
+                            if (start === -1) start = i;
+                          } else {
+                            if (start !== -1) {
+                              segments.push({ start, end: i - 1 });
+                              start = -1;
+                            }
+                          }
+                        }
+                        if (start !== -1) {
+                          segments.push({ start, end: scores.length - 1 });
+                        }
+
+                        if (segments.length === 0) {
+                          return <li style={{ color: 'var(--lime)' }}>✅ No continuous anomalous frame segments detected.</li>;
+                        }
+
+                        return segments.map((seg, idx) => {
+                          const startTime = (seg.start * frameTime).toFixed(2);
+                          const endTime = ((seg.end + 1) * frameTime).toFixed(2);
+                          const maxScore = Math.max(...scores.slice(seg.start, seg.end + 1));
+                          return (
+                            <li key={idx} style={{ color: 'var(--red)', marginBottom: '0.4rem' }}>
+                              ⚠️ <strong>Anomalous Segment {idx + 1}</strong>: {startTime}s – {endTime}s (Duration: {(endTime - startTime).toFixed(2)}s) — Peak Anomaly: {(maxScore * 100).toFixed(1)}%
+                            </li>
+                          );
+                        });
+                      })()}
+                    </ul>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>No frame anomaly scores available for timeline generation.</div>
+                )}
+
+                {/* CRF Tagger Output */}
+                <div style={{ fontSize: '0.8rem', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem', color: 'var(--magenta)' }}>
+                  Linear-Chain CRF Temporal Boundary Output:
+                </div>
+                {analysisResult.has_forgery ? (
+                  <div style={{ color: 'var(--red)', fontSize: '0.78rem' }}>
+                    ⚠️ CRF Boundary tags identify synthetic manipulation segment(s):
+                    {analysisResult.boundaries?.map((b, i) => (
+                      <div key={i} style={{ marginTop: '0.2rem', paddingLeft: '1rem' }}>
+                        • Segment {i+1}: {b.start_time?.toFixed(2)}s – {b.end_time?.toFixed(2)}s [{b.tag}] (Confidence: {(b.confidence * 100).toFixed(0)}%)
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--lime)', fontSize: '0.78rem' }}>
+                    ✅ No forgery boundary sequences were detected by the linear-chain CRF layer.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Heatmap Video ── */}
+            <div className="section-header section-header-magenta">Forensic Heatmap Overlay</div>
+            <div className="brutal-card" style={{ marginBottom: '3rem' }}>
+              <div className="card-title" style={{ color: 'var(--magenta)' }}>Per-Frame Anomaly Attention Map</div>
+              <div className="card-content" style={{ fontSize: '0.78rem', marginBottom: '1rem' }}>
+                Heatmap overlaid on source video frames — high-intensity regions indicate likely synthetic manipulation.
+              </div>
+              {analysisResult.heatmap_available ? (
+                <video
+                  controls
+                  autoPlay
+                  muted
+                  loop
+                  key={`heatmap-${analysisResult.report_id}`}
+                  src={`http://127.0.0.1:8000/heatmap/${analysisResult.report_id}`}
+                  style={{
+                    width: '100%',
+                    border: '3px solid var(--magenta)',
+                    boxShadow: '6px 6px 0px var(--magenta)',
+                    background: '#000',
+                    display: 'block',
+                  }}
+                />
               ) : (
-                <div className="card-content" style={{ color: 'var(--lime)' }}>
-                  ✅ No forgery boundary sequences were detected by the linear-chain CRF layer.
+                <div style={{ padding: '1rem', fontSize: '0.78rem', color: 'var(--muted)', border: '2px dashed var(--border)' }}>
+                  Heatmap not available for this analysis.
                 </div>
               )}
             </div>
 
             {analysisResult.html_report_path && (
-              <div style={{ background: 'var(--surface)', border: '3px solid var(--border)', padding: '2rem', boxShadow: '6px 6px 0px var(--border)', marginBottom: '3rem' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', marginBottom: '0.5rem', color: 'var(--cyan)' }}>▹ EXPLAINABLE HTML REPORT COMPREHENSIVE PATH</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--muted)', wordBreak: 'break-all' }}>
-                  {analysisResult.html_report_path}
-                </div>
+              <div style={{ background: 'var(--surface)', border: '3px solid var(--border)', padding: '1.5rem', marginBottom: '3rem' }}>
+                <div style={{ fontSize: '0.78rem', fontWeight: 'bold', color: 'var(--cyan)', marginBottom: '0.3rem' }}>▹ HTML FORENSIC REPORT</div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--muted)', wordBreak: 'break-all' }}>{analysisResult.html_report_path}</div>
               </div>
             )}
 

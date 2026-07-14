@@ -150,6 +150,31 @@ class CrossModalHeatmapGenerator:
             writer.write(frame)
 
         writer.release()
+
+        # Transcode to H264 so that browsers can play it natively
+        try:
+            import subprocess
+            from utils.io_utils import ensure_ffmpeg
+            ffmpeg_path = ensure_ffmpeg()
+            temp_path = str(Path(output_path).with_suffix(".temp.mp4"))
+            cmd = [
+                ffmpeg_path,
+                "-y",
+                "-i", str(output_path),
+                "-vcodec", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "baseline",
+                "-level", "3.0",
+                temp_path
+            ]
+            logger.info(f"Transcoding heatmap to H.264: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            Path(output_path).unlink(missing_ok=True)
+            Path(temp_path).rename(output_path)
+            logger.info(f"Heatmap transcode successful: {output_path}")
+        except Exception as e:
+            logger.error(f"Failed to transcode heatmap video to H.264: {e}")
+
         logger.info(
             f"Heatmap video saved: {output_path} "
             f"({len(heatmap_frames)} frames, {len(heatmap_frames)/self.fps:.1f}s)"
