@@ -60,7 +60,7 @@ class PreprocessConfig:
 
     # Video
     target_fps: int = 25
-    max_frames: int = 64                # Max frames to process per video (~2.5s at 25fps)
+    max_frames: int = 128               # Max frames to process per video (~5.12s at 25fps)
     frame_size: Tuple[int, int] = (720, 1280)  # H, W for initial resize
 
     # Face detection
