@@ -49,6 +49,8 @@ class ForensicReport:
     processing_time: float = 0.0
     model_version: str = "1.0.0"
     timestamp: str = ""
+    json_report_path: Optional[str] = None
+    html_report_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -70,6 +72,8 @@ class ForensicReport:
             "frame_anomaly_scores": [
                 round(s, 4) for s in self.frame_anomaly_scores
             ],
+            "json_report_path": self.json_report_path,
+            "html_report_path": self.html_report_path,
             "metadata": {
                 "video_path": self.video_path,
                 "duration": round(self.duration, 2),

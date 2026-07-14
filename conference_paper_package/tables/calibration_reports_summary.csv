@@ -1,0 +1,6 @@
+checkpoint,dataset,file,optimal_threshold,selection_metric,validation_best_balanced_acc_threshold,validation_best_f1_threshold
+checkpoints/best_model_combined.pth,faceforensics,calibration_report_faceforensics.json,0.52,f1,0.97,0.52
+checkpoints/best_model_combined.pth,fakeavceleb,calibration_report_fakeavceleb.json,0.9600000000000001,f1,0.9600000000000001,0.9600000000000001
+checkpoints/best_model_lavdf_full.pth,lavdf,calibration_report_lavdf.json,0.4,f1,0.49,0.4
+checkpoints/best_model_faceforensics_visual_focal.pth,faceforensics,focal__calibration_report_faceforensics.json,0.3,f1,0.37,0.3
+checkpoints/best_model_faceforensics_visual_hard.pth,faceforensics,hard__calibration_report_faceforensics.json,0.12,f1,0.21000000000000002,0.12

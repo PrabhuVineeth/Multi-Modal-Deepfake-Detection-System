@@ -1,0 +1,64 @@
+{
+  "classification": "REAL",
+  "confidence": 96.52,
+  "raw_probability": 0.0348,
+  "scores": {
+    "lip_sync": 0.052,
+    "identity": 0.122,
+    "temporal": 0.0124,
+    "av_sync": 0.1572
+  },
+  "channel_weights": {
+    "lip_sync": 0.2196,
+    "identity": 0.2334,
+    "temporal": 0.2765,
+    "av_sync": 0.2705
+  },
+  "boundaries": [
+    {
+      "start_time": 0.0,
+      "end_time": 0.0,
+      "start_frame": 0,
+      "end_frame": 0,
+      "tag": "REAL",
+      "confidence": 1.0
+    },
+    {
+      "start_time": 0.04,
+      "end_time": 0.6,
+      "start_frame": 1,
+      "end_frame": 15,
+      "tag": "BOUNDARY",
+      "confidence": 1.0
+    }
+  ],
+  "has_forgery_boundaries": false,
+  "frame_anomaly_scores": [
+    0.5723,
+    0.5723,
+    0.5723,
+    0.5723,
+    0.5723,
+    0.5728,
+    0.5728,
+    0.5723,
+    0.5723,
+    0.5723,
+    0.5728,
+    0.5723,
+    0.5723,
+    0.5728,
+    0.5723,
+    0.5723
+  ],
+  "json_report_path": null,
+  "html_report_path": null,
+  "metadata": {
+    "video_path": "C:\\Users\\Nitte\\AppData\\Local\\Temp\\tmp8vo8tibj.mp4",
+    "duration": 0.6,
+    "num_frames": 16,
+    "processing_time": 2.081,
+    "model_version": "1.0.0",
+    "timestamp": "2026-07-03T14:44:18.053004"
+  }
+}

@@ -1,0 +1,10 @@
+component,description,implementation_files
+Input preprocessing,"Audio extraction, frame extraction, face detection, mouth ROI extraction, audio-video synchronization",preprocessing/pipeline.py
+Audio encoder,Wav2Vec2-base speech representation branch,models/audio_encoder.py
+Visual encoder,ViT-base face frame encoder and mouth encoder,models/video_encoder.py
+Cross-modal fusion,"Speech-lip, voice-identity, and AV synchronization attention pathways",models/cross_attention.py
+Forensic heads,"Lip-sync, identity, temporal, and AV-sync evidence scoring",models/forensic_analyzers.py
+Evidence aggregation,Attention-weighted fusion and classification logits,models/evidence_aggregation.py
+Temporal localization,Temporal Forgery Boundary Detector with CNN/CRF-style sequence tagging,models/tfbd.py
+Explainability,Frame anomaly heatmap overlays and HTML/JSON forensic reports,models/heatmap_generator.py; reports/generator.py
+Deployment,FastAPI backend and Streamlit glassmorphism demo UI,app.py; ui/streamlit_app.py

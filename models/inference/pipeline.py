@@ -22,7 +22,7 @@ from config import (
     model_config,
     preprocess_config,
 )
-from inference.postprocessing import ForensicReport, PostProcessor
+from .postprocessing import ForensicReport, PostProcessor
 from models.heatmap_generator import CrossModalHeatmapGenerator
 from preprocessing.pipeline import PreprocessingPipeline
 
@@ -73,35 +73,90 @@ class ForensicInferencePipeline:
         self.model = None
         self._is_loaded = False
 
-    def load_model(self, checkpoint_path: Optional[str] = None) -> None:
+    def load_model(self, checkpoint_path: Optional[str] = None, dataset: Optional[str] = None) -> None:
         """
-        Load the forensic detection model.
+        Load the forensic detection model, optionally with dataset-aware routing.
 
         Args:
             checkpoint_path: Path to model checkpoint (.pth).
-                If None, initializes a fresh model (for testing).
+                If None, uses the dataset mapped checkpoint or initializes a fresh model.
+            dataset: Optional dataset name for routing ('fakeavceleb', 'faceforensics', or 'lavdf').
         """
         from models.full_model import DeepfakeForensicModel
 
-        logger.info("Initializing DeepfakeForensicModel...")
-        self.model = DeepfakeForensicModel(config=self.model_cfg)
+        DATASET_ROUTING = {
+            "fakeavceleb": {
+                "checkpoint": "checkpoints/best_model_fakeavceleb.pth",
+                "threshold": 0.50,
+                "visual_only": False,
+            },
+            "faceforensics": {
+                "checkpoint": "checkpoints/best_model_faceforensics_visual.pth",
+                "threshold": 0.12,
+                "visual_only": True,
+            },
+            "lavdf": {
+                "checkpoint": "checkpoints/best_model_lavdf_full.pth",
+                "threshold": 0.40,
+                "visual_only": False,
+            },
+        }
 
-        if checkpoint_path is not None:
-            logger.info(f"Loading checkpoint: {checkpoint_path}")
+        target_checkpoint = checkpoint_path
+        target_dataset = dataset
+
+        if dataset is not None:
+            dataset_key = dataset.lower().strip()
+            if dataset_key in ["faceforensics", "faceforensics++", "ff++"]:
+                dataset_key = "faceforensics"
+            
+            if dataset_key in DATASET_ROUTING:
+                config_entry = DATASET_ROUTING[dataset_key]
+                if checkpoint_path is None:
+                    target_checkpoint = config_entry["checkpoint"]
+                self.post_processor.threshold = config_entry["threshold"]
+                self.dataset_config = config_entry
+                logger.info(f"Dataset routing: set threshold to {config_entry['threshold']} (dataset: {dataset_key})")
+            else:
+                logger.warning(f"Unknown dataset '{dataset}' for routing. Using default settings.")
+                self.dataset_config = None
+        else:
+            self.dataset_config = None
+
+        should_load = False
+        if self.model is None:
+            logger.info("Initializing DeepfakeForensicModel...")
+            self.model = DeepfakeForensicModel(config=self.model_cfg)
+            should_load = True
+        else:
+            current_checkpoint = getattr(self, "_current_checkpoint", None)
+            if target_checkpoint is not None and target_checkpoint != current_checkpoint:
+                should_load = True
+
+        if should_load and target_checkpoint is not None:
+            logger.info(f"Loading checkpoint: {target_checkpoint}")
             from utils.io_utils import load_checkpoint
             load_checkpoint(
-                checkpoint_path, self.model, device=str(self.device)
+                target_checkpoint, self.model, device=str(self.device)
             )
+            self._current_checkpoint = target_checkpoint
+            self._current_dataset = target_dataset
+            
+            self.model.to(self.device)
+            self.model.eval()
+            self._is_loaded = True
+            
+            if self.inference_cfg.use_fp16 and self.device.type == "cuda":
+                self.model.half()
+                logger.info("Using FP16 inference")
+                
+            logger.info("Model loaded and ready for inference")
+        elif self.model is not None:
+            self.model.to(self.device)
+            self.model.eval()
+            self._is_loaded = True
 
-        self.model.to(self.device)
-        self.model.eval()
-        self._is_loaded = True
 
-        if self.inference_cfg.use_fp16 and self.device.type == "cuda":
-            self.model.half()
-            logger.info("Using FP16 inference")
-
-        logger.info("Model loaded and ready for inference")
 
     def analyze(
         self,
@@ -182,7 +237,9 @@ class ForensicInferencePipeline:
                         overlay = self.heatmap_generator._create_overlay(frame, score)
                         key_frames.append(overlay)
                         
-            generator.generate(report, key_frames=key_frames, output_dir=str(output_path))
+            report_paths = generator.generate(report, key_frames=key_frames, output_dir=str(output_path))
+            report.json_report_path = report_paths.get("json")
+            report.html_report_path = report_paths.get("html")
 
             # Generate heatmap video
             if generate_heatmap and report.frame_anomaly_scores:
@@ -214,6 +271,12 @@ class ForensicInferencePipeline:
         audio = torch.tensor(
             preprocessed.audio_waveform, dtype=torch.float32
         ).unsqueeze(0).to(self.device)
+
+        # Zero out audio if visual_only routing is enabled
+        dataset_config = getattr(self, "dataset_config", None)
+        if dataset_config and dataset_config.get("visual_only", False):
+            audio = torch.zeros_like(audio)
+            logger.info("Visual-only routing enabled: zeroed out audio input")
 
         # Face frames: [1, T, C, H, W]
         faces = np.stack(preprocessed.face_crops)  # [T, H, W, C] (BGR)

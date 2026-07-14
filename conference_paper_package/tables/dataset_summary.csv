@@ -1,0 +1,4 @@
+dataset,modalities,manipulation_types,boundary_labels,project_status
+FakeAVCeleb,Audio + Video,"Face-swap, lip-sync, and multimodal fake combinations",No,Full training completed; calibration and modality ablations available
+FaceForensics++,Video / visual-only final route,"DeepFakes, Face2Face, FaceSwap, NeuralTextures",No,Visual-only checkpoint used because audio was silent/unreliable
+LAV-DF,Audio + Video,Realistic audiovisual deepfakes,Yes,Full checkpoint present as best_model_lavdf_full.pth

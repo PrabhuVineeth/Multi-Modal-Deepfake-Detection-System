@@ -4,104 +4,248 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Deepfake Forensic Report</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6e6e6;
-            padding: 2rem;
-            line-height: 1.6;
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+            background: #0b0f19;
+            color: #f3f4f6;
+            padding: 3rem 1.5rem;
+            line-height: 1.5;
         }
-        .container { max-width: 1000px; margin: 0 auto; }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
 
+        /* Header Card with Glassmorphism & Neon Glow */
         .header {
             text-align: center;
-            padding: 2.5rem;
-            background: {{ cls_color }}10;
-            border-radius: 16px;
-            margin-bottom: 2rem;
-            border: 1px solid {{ cls_color }}33;
+            padding: 3rem 2rem;
+            background: linear-gradient(135deg, rgba(21, 28, 45, 0.7) 0%, rgba(13, 17, 30, 0.9) 100%);
+            border-radius: 20px;
+            margin-bottom: 2.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 0 40px -15px {{ cls_color }}40;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: {{ cls_color }};
+            box-shadow: 0 2px 15px 1px {{ cls_color }};
         }
         .badge {
             display: inline-block;
-            padding: 0.6rem 2.5rem;
+            padding: 0.5rem 2rem;
             background: {{ cls_color }};
             color: white;
-            font-size: 2rem;
-            font-weight: 700;
-            border-radius: 10px;
-            letter-spacing: 3px;
+            font-size: 1.25rem;
+            font-weight: 800;
+            border-radius: 9999px;
+            letter-spacing: 2px;
             text-transform: uppercase;
+            box-shadow: 0 4px 15px {{ cls_color }}33;
         }
         .confidence {
-            font-size: 3.5rem;
+            font-size: 4.5rem;
             font-weight: 800;
-            color: {{ cls_color }};
+            color: #ffffff;
             margin-top: 1rem;
+            letter-spacing: -2px;
+            line-height: 1;
         }
-        .conf-label { color: #8b949e; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
+        .conf-glow {
+            color: {{ cls_color }};
+            text-shadow: 0 0 20px {{ cls_color }}80;
+        }
+        .conf-label {
+            color: #9ca3af;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-top: 0.5rem;
+            font-weight: 600;
+        }
 
+        /* Evidence Score Dashboard Grid */
         .scores {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 1rem;
-            margin: 2rem 0;
+            gap: 1.25rem;
+            margin: 2.5rem 0;
         }
         .score-card {
-            background: #161b22;
-            border-radius: 12px;
+            background: #111827;
+            border-radius: 16px;
             padding: 1.5rem;
             text-align: center;
-            border: 1px solid #30363d;
-            transition: transform 0.2s;
+            border: 1px solid #1f2937;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
         }
-        .score-card:hover { transform: translateY(-2px); }
-        .score-value { font-size: 2rem; font-weight: 700; margin: 0.5rem 0; }
-        .score-label { color: #8b949e; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; }
+        .score-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 12px 20px -10px rgba(0, 0, 0, 0.7);
+        }
+        .score-value {
+            font-size: 2.25rem;
+            font-weight: 800;
+            margin: 0.5rem 0;
+            letter-spacing: -1px;
+        }
+        .score-label {
+            color: #9ca3af;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+        }
+        .score-bar-bg {
+            width: 100%;
+            height: 5px;
+            background: #374151;
+            border-radius: 10px;
+            margin-top: 1rem;
+            overflow: hidden;
+        }
+        .score-bar-fill {
+            height: 100%;
+            border-radius: 10px;
+        }
 
+        /* Structured Report Sections */
         .section {
-            background: #161b22;
-            border-radius: 12px;
-            padding: 1.5rem 2rem;
-            margin-bottom: 1.5rem;
-            border: 1px solid #30363d;
+            background: #111827;
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: 1px solid #1f2937;
+            box-shadow: 0 4px 20px -5px rgba(0,0,0,0.3);
         }
-        .section h3 { color: #58a6ff; margin-bottom: 1rem; }
+        .section h3 {
+            color: #3b82f6;
+            margin-bottom: 1.5rem;
+            font-size: 1.15rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
 
-        .boundary-timeline { display: flex; height: 32px; border-radius: 6px; overflow: hidden; }
-        .boundary-seg { height: 100%; cursor: pointer; }
-        .boundary-seg:hover { opacity: 0.8; }
+        /* Temporal Timeline Boundary Dashboard */
+        .boundary-timeline {
+            display: flex;
+            height: 36px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #374151;
+            background: #1f2937;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .boundary-seg {
+            height: 100%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .boundary-seg:hover {
+            opacity: 0.85;
+            filter: brightness(1.2);
+        }
 
-        .legend { display: flex; gap: 1.5rem; margin-top: 0.8rem; }
-        .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
-        .legend-dot { width: 14px; height: 14px; border-radius: 3px; }
+        .legend {
+            display: flex;
+            gap: 2rem;
+            margin-top: 1.25rem;
+            background: #1f2937;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            border: 1px solid #374151;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: #d1d5db;
+            font-weight: 500;
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 4px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
 
+        /* Dynamic Visualizer Frame Grid */
         .frames-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1rem;
+            gap: 1.25rem;
         }
         .frame-card {
-            border-radius: 10px;
+            border-radius: 12px;
             overflow: hidden;
-            border: 1px solid #30363d;
-            transition: transform 0.2s;
+            border: 1px solid #1f2937;
+            background: #030712;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        .frame-card:hover { transform: scale(1.02); }
-        .frame-card img { width: 100%; display: block; }
+        .frame-card:hover {
+            transform: scale(1.03);
+            border-color: #3b82f6;
+            box-shadow: 0 10px 25px -10px rgba(59, 130, 246, 0.4);
+        }
+        .frame-card img {
+            width: 100%;
+            display: block;
+            object-fit: cover;
+        }
 
+        /* Code/Mono styled metadata grid */
         .meta-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 0.8rem;
+            gap: 1.25rem;
         }
-        .meta-item { color: #8b949e; font-size: 0.85rem; }
-        .meta-item strong { color: #c9d1d9; }
+        .meta-item {
+            background: #1f2937;
+            padding: 1rem 1.25rem;
+            border-radius: 10px;
+            border: 1px solid #374151;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .meta-item strong {
+            color: #9ca3af;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .meta-item span {
+            color: #f3f4f6;
+            font-weight: 600;
+        }
 
         @media (max-width: 768px) {
             .scores { grid-template-columns: repeat(2, 1fr); }
             .meta-grid { grid-template-columns: 1fr; }
+            body { padding: 1.5rem 1rem; }
         }
     </style>
 </head>
@@ -110,7 +254,9 @@
     <!-- Header -->
     <div class="header">
         <div class="badge">{{ report.classification }}</div>
-        <div class="confidence">{{ "%.1f"|format(report.confidence) }}%</div>
+        <div class="confidence">
+            <span class="conf-glow">{{ "%.1f"|format(report.confidence) }}%</span>
+        </div>
         <div class="conf-label">Confidence Score</div>
     </div>
 
@@ -118,19 +264,31 @@
     <div class="scores">
         <div class="score-card">
             <div class="score-label">Lip Sync</div>
-            <div class="score-value" style="color: #3498db">{{ "%.1f"|format(report.lip_sync_score * 100) }}%</div>
+            <div class="score-value" style="color: #3b82f6">{{ "%.1f"|format(report.lip_sync_score * 100) }}%</div>
+            <div class="score-bar-bg">
+                <div class="score-bar-fill" style="width: {{ report.lip_sync_score * 100 }}%; background: #3b82f6; box-shadow: 0 0 8px #3b82f6;"></div>
+            </div>
         </div>
         <div class="score-card">
             <div class="score-label">Identity</div>
-            <div class="score-value" style="color: #9b59b6">{{ "%.1f"|format(report.identity_score * 100) }}%</div>
+            <div class="score-value" style="color: #a855f7">{{ "%.1f"|format(report.identity_score * 100) }}%</div>
+            <div class="score-bar-bg">
+                <div class="score-bar-fill" style="width: {{ report.identity_score * 100 }}%; background: #a855f7; box-shadow: 0 0 8px #a855f7;"></div>
+            </div>
         </div>
         <div class="score-card">
             <div class="score-label">Temporal</div>
-            <div class="score-value" style="color: #e67e22">{{ "%.1f"|format(report.temporal_score * 100) }}%</div>
+            <div class="score-value" style="color: #f97316">{{ "%.1f"|format(report.temporal_score * 100) }}%</div>
+            <div class="score-bar-bg">
+                <div class="score-bar-fill" style="width: {{ report.temporal_score * 100 }}%; background: #f97316; box-shadow: 0 0 8px #f97316;"></div>
+            </div>
         </div>
         <div class="score-card">
             <div class="score-label">AV Sync</div>
-            <div class="score-value" style="color: #1abc9c">{{ "%.1f"|format(report.av_sync_score * 100) }}%</div>
+            <div class="score-value" style="color: #10b981">{{ "%.1f"|format(report.av_sync_score * 100) }}%</div>
+            <div class="score-bar-bg">
+                <div class="score-bar-fill" style="width: {{ report.av_sync_score * 100 }}%; background: #10b981; box-shadow: 0 0 8px #10b981;"></div>
+            </div>
         </div>
     </div>
 
@@ -141,7 +299,7 @@
         <div class="boundary-timeline">
             {% for b in report.boundaries %}
             {% set width = ((b.end_time - b.start_time) / report.duration * 100) if report.duration > 0 else 100 %}
-            {% set color = "#2ecc71" if b.tag == "REAL" else ("#e74c3c" if b.tag == "FAKE" else "#f39c12") %}
+            {% set color = "#10b981" if b.tag == "REAL" else ("#ef4444" if b.tag == "FAKE" else "#f59e0b") %}
             <div class="boundary-seg"
                  style="width: {{ width }}%; background: {{ color }};"
                  title="{{ b.tag }}: {{ "%.1f"|format(b.start_time) }}s - {{ "%.1f"|format(b.end_time) }}s">
@@ -149,9 +307,9 @@
             {% endfor %}
         </div>
         <div class="legend">
-            <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Real</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Fake</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#f39c12"></div> Boundary</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#10b981; box-shadow: 0 0 8px #10b981;"></div> Real Segment</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#ef4444; box-shadow: 0 0 8px #ef4444;"></div> Manipulated Segment</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#f59e0b; box-shadow: 0 0 8px #f59e0b;"></div> Anomaly Boundary</div>
         </div>
     </div>
     {% endif %}
@@ -159,7 +317,7 @@
     <!-- Key Frames -->
     {% if key_frames %}
     <div class="section">
-        <h3>Key Heatmap Frames</h3>
+        <h3>Key Heatmap Attribution Frames</h3>
         <div class="frames-grid">
             {% for frame in key_frames %}
             <div class="frame-card">
@@ -172,14 +330,32 @@
 
     <!-- Metadata -->
     <div class="section">
-        <h3>Analysis Details</h3>
+        <h3>Attribution & Analysis Details</h3>
         <div class="meta-grid">
-            <div class="meta-item"><strong>Video:</strong> {{ report.video_path | basename if report.video_path else 'N/A' }}</div>
-            <div class="meta-item"><strong>Duration:</strong> {{ "%.1f"|format(report.duration) }}s</div>
-            <div class="meta-item"><strong>Frames:</strong> {{ report.num_frames }}</div>
-            <div class="meta-item"><strong>Processing:</strong> {{ "%.1f"|format(report.processing_time) }}s</div>
-            <div class="meta-item"><strong>Model:</strong> v{{ report.model_version }}</div>
-            <div class="meta-item"><strong>Timestamp:</strong> {{ report.timestamp }}</div>
+            <div class="meta-item">
+                <strong>Source Video</strong>
+                <span>{{ report.video_path | basename if report.video_path else 'N/A' }}</span>
+            </div>
+            <div class="meta-item">
+                <strong>Temporal Duration</strong>
+                <span>{{ "%.1f"|format(report.duration) }}s</span>
+            </div>
+            <div class="meta-item">
+                <strong>Total Frames</strong>
+                <span>{{ report.num_frames }}</span>
+            </div>
+            <div class="meta-item">
+                <strong>Inference Speed</strong>
+                <span>{{ "%.1f"|format(report.processing_time) }}s</span>
+            </div>
+            <div class="meta-item">
+                <strong>Engine Version</strong>
+                <span>v{{ report.model_version }}</span>
+            </div>
+            <div class="meta-item">
+                <strong>Execution Time</strong>
+                <span>{{ report.timestamp }}</span>
+            </div>
         </div>
     </div>
 </div>

@@ -1,0 +1,56 @@
+{
+    "checkpoint": "checkpoints/best_model_lavdf_full.pth",
+    "dataset": "lavdf",
+    "selection_metric": "f1",
+    "optimal_threshold": 0.4,
+    "validation_best_f1_threshold": 0.4,
+    "validation_best_balanced_acc_threshold": 0.49,
+    "test_results_at_0.50": {
+        "threshold": 0.5,
+        "accuracy": 0.7329857299670691,
+        "precision": 0.7392897406989853,
+        "recall": 0.7198133918770582,
+        "f1": 0.7294215795328143,
+        "balanced_accuracy": 0.7329857299670692,
+        "tp": 2623,
+        "tn": 2719,
+        "fp": 925,
+        "fn": 1021
+    },
+    "test_results_at_selected_t": {
+        "threshold": 0.4,
+        "accuracy": 0.7313391877058177,
+        "precision": 0.7003326996197718,
+        "recall": 0.8087266739846323,
+        "f1": 0.7506367804381049,
+        "balanced_accuracy": 0.7313391877058177,
+        "tp": 2947,
+        "tn": 2383,
+        "fp": 1261,
+        "fn": 697
+    },
+    "test_results_at_best_val_f1_t": {
+        "threshold": 0.4,
+        "accuracy": 0.7313391877058177,
+        "precision": 0.7003326996197718,
+        "recall": 0.8087266739846323,
+        "f1": 0.7506367804381049,
+        "balanced_accuracy": 0.7313391877058177,
+        "tp": 2947,
+        "tn": 2383,
+        "fp": 1261,
+        "fn": 697
+    },
+    "test_results_at_best_val_bal_acc_t": {
+        "threshold": 0.49,
+        "accuracy": 0.7357299670691547,
+        "precision": 0.7378183831672204,
+        "recall": 0.7313391877058177,
+        "f1": 0.7345644983461961,
+        "balanced_accuracy": 0.7357299670691548,
+        "tp": 2665,
+        "tn": 2697,
+        "fp": 947,
+        "fn": 979
+    }
+}

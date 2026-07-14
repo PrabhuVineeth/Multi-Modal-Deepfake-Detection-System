@@ -1,0 +1,13 @@
+checkpoint,dataset_or_stage,size_mb,last_modified,copied_to_package
+best_model_combined.pth,Combined / cross-domain,1391.84,2026-07-13T13:15:19,no - inventory only
+best_model_lavdf_full.pth,LAV-DF,1389.09,2026-07-07T14:14:32,no - inventory only
+best_model_lavdf_quick_fixed.pth,LAV-DF,1394.13,2026-07-03T09:38:30,no - inventory only
+best_model_lavdf_quick.pth,LAV-DF,1389.09,2026-07-02T15:02:28,no - inventory only
+best_model_lavdf.pth,LAV-DF,1389.09,2026-07-02T13:03:29,no - inventory only
+best_model_faceforensics_visual_hard.pth,FaceForensics++,1386.84,2026-07-02T11:36:33,no - inventory only
+best_model_faceforensics_visual_focal.pth,FaceForensics++,1386.84,2026-07-02T10:55:53,no - inventory only
+best_model_faceforensics_visual.pth,FaceForensics++,1386.83,2026-07-02T10:13:30,no - inventory only
+best_model_faceforensics_extra.pth,FaceForensics++,1386.83,2026-07-01T15:05:05,no - inventory only
+best_model_faceforensics.pth,FaceForensics++,1391.84,2026-07-01T13:17:12,no - inventory only
+best_model.pth,FakeAVCeleb,1391.83,2026-07-01T10:46:02,no - inventory only
+best_model_fakeavceleb.pth,FakeAVCeleb,1391.83,2026-07-01T10:46:02,no - inventory only

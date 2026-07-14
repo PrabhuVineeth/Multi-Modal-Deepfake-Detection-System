@@ -1,6 +1,8 @@
 """
 Reusable Streamlit UI components for the Deepfake Forensic Detection System.
 
+Theme: NEON BRUTALISM — hard edges, neon accents, monospace typography.
+
 Components: score gauges, confidence bars, boundary timelines, and more.
 """
 
@@ -10,27 +12,46 @@ import plotly.graph_objects as go
 from typing import Dict, List, Optional
 
 
+# Neon Brutalism palette
+NEON = {
+    "cyan": "#00f0ff",
+    "magenta": "#ff00aa",
+    "lime": "#39ff14",
+    "yellow": "#ffe600",
+    "red": "#ff3333",
+    "bg": "#0a0a0a",
+    "surface": "#111111",
+    "surface2": "#1a1a1a",
+    "border": "#2a2a2a",
+    "text": "#e0e0e0",
+    "muted": "#888888",
+}
+
+
 def render_classification_badge(classification: str, confidence: float):
-    """Render a large classification badge with confidence."""
-    color = "#2ecc71" if classification == "REAL" else "#e74c3c"
-    bg = "#1a4a2e" if classification == "REAL" else "#4a1a1a"
-    emoji = "✅" if classification == "REAL" else "🚨"
+    """Render a large classification badge with confidence — neon brutalism style."""
+    is_real = classification == "REAL"
+    color = NEON["lime"] if is_real else NEON["red"]
+    emoji = "✓" if is_real else "✗"
 
     st.markdown(f"""
-    <div style="text-align: center; padding: 2rem; background: {bg};
-                border-radius: 16px; border: 2px solid {color}40;
-                margin-bottom: 1.5rem;">
-        <div style="font-size: 3rem;">{emoji}</div>
+    <div style="text-align: center; padding: 2rem; background: {NEON['surface']};
+                border: 3px solid {color}; margin-bottom: 1.5rem;
+                box-shadow: 8px 8px 0px {color}40;">
+        <div style="font-size: 3rem; color: {color}; font-family: 'Outfit', sans-serif; font-weight: 900;">{emoji}</div>
         <div style="display: inline-block; padding: 0.5rem 2rem;
-                    background: {color}; color: white; font-size: 2rem;
-                    font-weight: 800; border-radius: 10px;
-                    letter-spacing: 3px; margin: 0.5rem 0;">
+                    background: {color}; color: #000000; font-size: 2rem;
+                    font-weight: 900; font-family: 'Outfit', sans-serif;
+                    letter-spacing: 4px; margin: 0.5rem 0;
+                    text-transform: uppercase;">
             {classification}
         </div>
-        <div style="font-size: 3rem; font-weight: 800; color: {color};
-                    margin-top: 0.5rem;">{confidence:.1f}%</div>
-        <div style="color: #8b949e; text-transform: uppercase;
-                    letter-spacing: 1px; font-size: 0.85rem;">
+        <div style="font-size: 3rem; font-weight: 900; color: {color};
+                    font-family: 'Outfit', sans-serif;
+                    margin-top: 0.5rem; text-shadow: 0 0 20px {color}40;">{confidence:.1f}%</div>
+        <div style="color: {NEON['muted']}; text-transform: uppercase;
+                    letter-spacing: 2px; font-size: 0.75rem;
+                    font-family: 'JetBrains Mono', monospace;">
             Confidence Score
         </div>
     </div>
@@ -38,12 +59,12 @@ def render_classification_badge(classification: str, confidence: float):
 
 
 def render_score_gauges(scores: Dict[str, float]):
-    """Render four score gauges using Plotly."""
+    """Render four score gauges using Plotly — neon brutalism colors."""
     score_config = [
-        ("Lip Sync", scores.get("lip_sync", 0), "#3498db"),
-        ("Identity", scores.get("identity", 0), "#9b59b6"),
-        ("Temporal", scores.get("temporal", 0), "#e67e22"),
-        ("AV Sync", scores.get("av_sync", 0), "#1abc9c"),
+        ("Lip Sync", scores.get("lip_sync", 0), NEON["cyan"]),
+        ("Identity", scores.get("identity", 0), NEON["magenta"]),
+        ("Temporal", scores.get("temporal", 0), NEON["yellow"]),
+        ("AV Sync", scores.get("av_sync", 0), NEON["lime"]),
     ]
 
     cols = st.columns(4)
@@ -52,19 +73,20 @@ def render_score_gauges(scores: Dict[str, float]):
             fig = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=value * 100,
-                number={"suffix": "%", "font": {"size": 24, "color": color}},
+                number={"suffix": "%", "font": {"size": 24, "color": color, "family": "JetBrains Mono"}},
                 gauge={
-                    "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#333"},
+                    "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": NEON["border"]},
                     "bar": {"color": color, "thickness": 0.6},
-                    "bgcolor": "#1e1e2e",
-                    "bordercolor": "#333",
+                    "bgcolor": NEON["surface"],
+                    "bordercolor": NEON["border"],
+                    "borderwidth": 2,
                     "steps": [
-                        {"range": [0, 30], "color": "#162447"},
-                        {"range": [30, 70], "color": "#1f4068"},
-                        {"range": [70, 100], "color": "#1b1b2f"},
+                        {"range": [0, 30], "color": NEON["surface"]},
+                        {"range": [30, 70], "color": NEON["surface2"]},
+                        {"range": [70, 100], "color": NEON["surface"]},
                     ],
                     "threshold": {
-                        "line": {"color": "#e74c3c", "width": 2},
+                        "line": {"color": NEON["red"], "width": 2},
                         "thickness": 0.8,
                         "value": 50,
                     },
@@ -74,24 +96,24 @@ def render_score_gauges(scores: Dict[str, float]):
                 height=180,
                 margin=dict(l=20, r=20, t=30, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
-                font={"color": "#e6e6e6"},
-                title={"text": name, "font": {"size": 13, "color": "#8b949e"}},
+                font={"color": NEON["text"], "family": "JetBrains Mono"},
+                title={"text": name, "font": {"size": 13, "color": NEON["muted"], "family": "JetBrains Mono"}},
             )
             st.plotly_chart(fig, use_container_width=True)
 
 
 def render_boundary_timeline(boundaries: List[dict], duration: float):
-    """Render the temporal forgery boundary timeline."""
+    """Render the temporal forgery boundary timeline — neon brutalism style."""
     if not boundaries or duration <= 0:
         st.info("No temporal boundaries detected.")
         return
 
     fig = go.Figure()
 
-    colors = {"REAL": "#2ecc71", "FAKE": "#e74c3c", "BOUNDARY": "#f39c12"}
+    colors = {"REAL": NEON["lime"], "FAKE": NEON["red"], "BOUNDARY": NEON["yellow"]}
 
     for b in boundaries:
-        color = colors.get(b.get("tag", ""), "#888888")
+        color = colors.get(b.get("tag", ""), NEON["muted"])
         fig.add_trace(go.Bar(
             x=[b["end_time"] - b["start_time"]],
             y=["Timeline"],
@@ -118,8 +140,8 @@ def render_boundary_timeline(boundaries: List[dict], duration: float):
             title="Time (seconds)",
             range=[0, duration],
             showgrid=True,
-            gridcolor="#333",
-            tickfont=dict(color="#8b949e"),
+            gridcolor=NEON["border"],
+            tickfont=dict(color=NEON["muted"], family="JetBrains Mono"),
         ),
         yaxis=dict(visible=False),
         barmode="stack",
@@ -128,28 +150,38 @@ def render_boundary_timeline(boundaries: List[dict], duration: float):
     st.plotly_chart(fig, use_container_width=True)
 
     # Legend
-    st.markdown("""
-    <div style="display: flex; gap: 1.5rem; justify-content: center; margin-top: -0.5rem;">
-        <span style="color: #2ecc71;">● Real</span>
-        <span style="color: #e74c3c;">● Fake</span>
-        <span style="color: #f39c12;">● Boundary</span>
+    st.markdown(f"""
+    <div style="display: flex; gap: 1.5rem; justify-content: center; margin-top: -0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem;">
+        <span style="color: {NEON['lime']};">■ Real</span>
+        <span style="color: {NEON['red']};">■ Fake</span>
+        <span style="color: {NEON['yellow']};">■ Boundary</span>
     </div>
     """, unsafe_allow_html=True)
 
 
 def render_channel_weights(weights: Dict[str, float]):
-    """Render evidence channel contribution weights."""
+    """Render evidence channel contribution weights — neon brutalism bars."""
     if not weights:
         return
 
-    st.markdown("#### Evidence Channel Weights")
-    st.caption("How much each evidence type contributed to the decision")
+    st.markdown(
+        f"""<div style="font-family:'Outfit',sans-serif; font-weight:800; font-size:1.2rem; color:#ffffff; margin-bottom:0.8rem; padding-left:0.8rem; border-left:4px solid {NEON['cyan']};">
+            Evidence Channel Weights
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""<div style="font-size:0.72rem; color:{NEON['muted']}; margin-bottom:0.8rem; font-family:'JetBrains Mono',monospace;">
+            How much each evidence type contributed to the decision
+        </div>""",
+        unsafe_allow_html=True,
+    )
 
     colors = {
-        "lip_sync": "#3498db",
-        "identity": "#9b59b6",
-        "temporal": "#e67e22",
-        "av_sync": "#1abc9c",
+        "lip_sync": NEON["cyan"],
+        "identity": NEON["magenta"],
+        "temporal": NEON["yellow"],
+        "av_sync": NEON["lime"],
     }
     labels = {
         "lip_sync": "Lip Sync",
@@ -160,29 +192,38 @@ def render_channel_weights(weights: Dict[str, float]):
 
     for key, value in weights.items():
         label = labels.get(key, key)
-        color = colors.get(key, "#888")
+        color = colors.get(key, NEON["muted"])
         pct = value * 100
         st.markdown(f"""
-        <div style="margin-bottom: 0.5rem;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="font-size: 0.85rem; color: #c9d1d9;">{label}</span>
-                <span style="font-size: 0.85rem; color: {color};">{pct:.1f}%</span>
+        <div style="margin-bottom: 0.6rem;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                <span style="font-size: 0.78rem; color: {NEON['text']}; font-family: 'JetBrains Mono', monospace;">{label}</span>
+                <span style="font-size: 0.78rem; color: {color}; font-weight: 700; font-family: 'JetBrains Mono', monospace;">{pct:.1f}%</span>
             </div>
-            <div style="background: #21262d; border-radius: 4px; height: 8px;">
+            <div style="background: {NEON['surface']}; border: 2px solid {NEON['border']}; height: 10px;">
                 <div style="width: {pct}%; background: {color}; height: 100%;
-                            border-radius: 4px; transition: width 0.5s;"></div>
+                            transition: width 0.5s;"></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 
 def render_metadata(report_dict: dict):
-    """Render analysis metadata."""
+    """Render analysis metadata — neon brutalism cards."""
     meta = report_dict.get("metadata", {})
     cols = st.columns(3)
-    with cols[0]:
-        st.metric("Duration", f"{meta.get('duration', 0):.1f}s")
-    with cols[1]:
-        st.metric("Frames", meta.get("num_frames", 0))
-    with cols[2]:
-        st.metric("Processing", f"{meta.get('processing_time', 0):.1f}s")
+    items = [
+        ("Duration", f"{meta.get('duration', 0):.1f}s", NEON["cyan"]),
+        ("Frames", str(meta.get("num_frames", 0)), NEON["magenta"]),
+        ("Processing", f"{meta.get('processing_time', 0):.1f}s", NEON["yellow"]),
+    ]
+    for col, (label, value, color) in zip(cols, items):
+        with col:
+            st.markdown(f"""
+            <div style="background:{NEON['surface2']}; border:2px solid {NEON['border']};
+                        border-top:3px solid {color}; padding:1rem;
+                        box-shadow:4px 4px 0px {NEON['border']};">
+                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:{NEON['muted']}; font-family:'JetBrains Mono',monospace;">{label}</div>
+                <div style="font-size:1.5rem; font-weight:900; color:{color}; font-family:'Outfit',sans-serif; margin-top:0.15rem;">{value}</div>
+            </div>
+            """, unsafe_allow_html=True)
