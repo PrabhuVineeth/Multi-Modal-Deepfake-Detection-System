@@ -364,6 +364,58 @@ AV-Sync Head & 0.9785 & 0.2185 & ⚠️ High cross-modal identity mismatch detec
 
 Although the overall classifier probability was low ($0.0901$), the Visual Identity head and AV-Sync head outputted high anomaly scores ($0.9648$ and $0.9785$). The specialist override fallback intercepted the prediction, overriding the verdict to FAKE. The system drew a red bounding box around the face region, labeling it ``FACE SWAPPED'' while correctly leaving the mouth region unflagged. This case study demonstrates how the explainability output prevents false negatives and provides actionable diagnostic reports.
 
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=0.85]
+    % Draw grid
+    \draw[thick] (0,0) rectangle (4,4);
+    \draw[thick] (0,2) -- (4,2);
+    \draw[thick] (2,0) -- (2,4);
+    
+    % Draw labels
+    \node at (-1.8, 3) {\textbf{Actual REAL}};
+    \node at (-1.8, 1) {\textbf{Actual FAKE}};
+    \node at (1, 4.4) {\textbf{Predicted REAL}};
+    \node at (3, 4.4) {\textbf{Predicted FAKE}};
+    
+    % Draw cells
+    \node[align=center] at (1,3) {\textbf{TN} \\ 2383 \\ (65.4\%)};
+    \node[align=center] at (3,3) {\textbf{FP} \\ 1261 \\ (34.6\%)};
+    \node[align=center] at (1,1) {\textbf{FN} \\ 697 \\ (19.1\%)};
+    \node[align=center] at (3,1) {\textbf{TP} \\ 2947 \\ (80.9\%)};
+\end{tikzpicture}
+\caption{Confusion Matrix of the routed MDDS model on the LAV-DF test set under the validation-calibrated threshold ($\tau = 0.40$).}
+\label{fig:confusion_matrix_lavdf}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=0.9]
+    % Outer container (mock video player)
+    \draw[thick, fill=black!5] (0,0) rectangle (6,4.5);
+    % Title bar
+    \draw[thick, fill=gray!30] (0,4.1) rectangle (6,4.5);
+    \node at (3, 4.3) {\small \textbf{Forensic Heatmap Overlay - Frame 45}};
+    
+    % Sample face bounding box (dashed)
+    \draw[red, ultra thick] (1.5, 1.0) rectangle (4.5, 3.8);
+    \node[red, above] at (3, 3.8) {\small \textbf{FACE SWAPPED (96.5\% confidence)}};
+    
+    % Mouth region highlighted (lip sync anomaly)
+    \draw[yellow, ultra thick, dashed] (2.2, 1.4) rectangle (3.8, 2.0);
+    \node[yellow, below] at (3, 1.4) {\scriptsize \textbf{LIPS NORMAL}};
+    
+    % Timeline bar at the bottom
+    \draw[thick, fill=gray!10] (0.5, 0.3) rectangle (5.5, 0.7);
+    \draw[fill=red!60] (0.5, 0.3) rectangle (2.5, 0.7);
+    \draw[fill=green!60] (2.5, 0.3) rectangle (4.2, 0.7);
+    \draw[fill=red!60] (4.2, 0.3) rectangle (5.5, 0.7);
+    \node at (3, 0.1) {\tiny Timeline Index (Red = Fake, Green = Real)};
+\end{tikzpicture}
+\caption{Simulated graphical output of the MDDS explainability overlay. The system renders spatial anomalies (red bounding box) alongside the aligned timeline segments (bottom bar).}
+\label{fig:explainability_visual_output}
+\end{figure}
+
 \section{Discussion and Limitations}
 \subsection{Modality Missingness and Silent Tracks}
 A primary vulnerability of multimodal models is the assumption that both channels are always present. When a user uploads a video that lacks an audio track (e.g., silent FaceForensics++ clips), a naive multimodal model will interpret the missing audio as a severe sync anomaly, producing false positives. MDDS mitigates this using dataset-aware routing, which automatically switches to visual-only inference when the audio channel is missing or silent.
