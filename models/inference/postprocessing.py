@@ -135,18 +135,24 @@ class PostProcessor:
         prob = self._to_float(forensic_output.probability)
         report.raw_probability = prob
         report.classification = "FAKE" if prob >= self.threshold else "REAL"
-        
-        # Calibrate confidence relative to the decision threshold
-        if report.classification == "FAKE":
-            report.confidence = 50.0 + 50.0 * (prob - self.threshold) / (1.0 - self.threshold + 1e-6)
-        else:
-            report.confidence = 50.0 + 50.0 * (self.threshold - prob) / (self.threshold + 1e-6)
 
         # Per-analyzer scores
         report.lip_sync_score = self._to_float(forensic_output.lip_sync_score)
         report.identity_score = self._to_float(forensic_output.identity_score)
         report.temporal_score = self._to_float(forensic_output.temporal_score)
         report.av_sync_score = self._to_float(forensic_output.av_sync_score)
+
+        # Fallback override: if any individual component analyzer detects manipulation with extremely high confidence
+        if report.classification == "REAL" and max(report.lip_sync_score, report.identity_score, report.av_sync_score) > 0.85:
+            report.classification = "FAKE"
+            prob = max(prob, 0.75)  # Boost probability above threshold
+            report.raw_probability = prob
+
+        # Calibrate confidence relative to the decision threshold
+        if report.classification == "FAKE":
+            report.confidence = 50.0 + 50.0 * (prob - self.threshold) / (1.0 - self.threshold + 1e-6)
+        else:
+            report.confidence = 50.0 + 50.0 * (self.threshold - prob) / (self.threshold + 1e-6)
 
         # Channel weights
         if forensic_output.channel_weights is not None:
