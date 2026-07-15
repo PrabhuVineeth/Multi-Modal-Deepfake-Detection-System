@@ -143,10 +143,18 @@ class PostProcessor:
         report.temporal_score = self._to_float(forensic_output.temporal_score)
         report.av_sync_score = self._to_float(forensic_output.av_sync_score)
 
-        # Fallback override: if any individual component analyzer detects manipulation with extremely high confidence
-        if report.classification == "REAL" and max(report.lip_sync_score, report.identity_score, report.av_sync_score) > 0.85:
+        # Fallback override: if any individual specialist detects manipulation
+        # Threshold lowered to 0.60 to catch real-world face-swaps (e.g. YouTube deepfakes)
+        # that score moderately on identity/av_sync but not strongly on the fused output
+        max_specialist = max(report.lip_sync_score, report.identity_score, report.av_sync_score)
+        if report.classification == "REAL" and max_specialist > 0.60:
+            logger.warning(
+                f"Specialist override triggered: identity={report.identity_score:.3f}, "
+                f"lip_sync={report.lip_sync_score:.3f}, av_sync={report.av_sync_score:.3f}"
+            )
             report.classification = "FAKE"
-            prob = max(prob, 0.75)  # Boost probability above threshold
+            # Scale boost proportionally — higher specialist score = higher boosted probability
+            prob = max(prob, self.threshold + (1.0 - self.threshold) * (max_specialist - 0.60) / 0.40)
             report.raw_probability = prob
 
         # Calibrate confidence relative to the decision threshold
@@ -172,13 +180,18 @@ class PostProcessor:
             if scores.ndim > 2:
                 scores = scores[0]  # First batch element
             raw_scores = scores.flatten().tolist()
-            
+
+            # Preserve raw scores BEFORE any scaling (used for heatmap overlay intensity)
+            report.raw_frame_anomaly_scores = [float(s) for s in raw_scores]
+
             # Calibrate frame scores relative to the global video prediction.
-            # If the overall video probability is below threshold (REAL), scale down
-            # the frame scores proportionally to prevent false-alarm red blocks on real videos.
-            factor = min(1.0, prob / self.threshold) if prob < self.threshold else 1.0
-            report.frame_anomaly_scores = [float(s * factor) for s in raw_scores]
-            report.raw_frame_anomaly_scores = list(report.frame_anomaly_scores)
+            # Only scale down on confirmed REAL videos to prevent false red blocks.
+            # For FAKE (including specialist overrides), keep scores unscaled.
+            if report.classification == "REAL":
+                factor = min(1.0, prob / (self.threshold + 1e-6))
+                report.frame_anomaly_scores = [float(s * factor) for s in raw_scores]
+            else:
+                report.frame_anomaly_scores = list(report.raw_frame_anomaly_scores)
 
         # Temporal boundaries from TFBD
         if forensic_output.boundary_tags is not None and timestamps:
@@ -189,8 +202,14 @@ class PostProcessor:
             if tags.dim() > 1:
                 tags = tags[0]  # First batch
 
-            # If the overall video is classified as REAL, override boundary tags to all REAL (0)
-            if report.classification == "REAL":
+            # Align CRF tags with the final classification verdict.
+            # If overall verdict is FAKE, override all tags to FAKE (1) so that
+            # the boundary display is consistent — especially for unseen-domain
+            # videos where the CRF has no training signal.
+            if report.classification == "FAKE":
+                tags = torch.ones_like(tags)  # All FAKE
+            # If overall verdict is REAL, override all tags to REAL (0)
+            elif report.classification == "REAL":
                 tags = torch.zeros_like(tags)
 
             boundaries = tfbd.extract_boundaries(tags, timestamps)

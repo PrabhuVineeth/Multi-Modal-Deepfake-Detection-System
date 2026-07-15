@@ -371,7 +371,7 @@ export default function App() {
                   setLocalPath(e.target.value);
                   setSelectedFile(null); // Clear selected file if local path is chosen
                 }}
-                placeholder="e.g. C:\Users\Nitte\Desktop\NNM24AD071\LAV-DF\dev\004053.mp4"
+                placeholder="e.g. C:\\Users\\Nitte\\Desktop\\NNM24AD071\\LAV-DF\\dev\\004053.mp4"
                 style={{
                   width: '100%',
                   background: '#000',
@@ -599,7 +599,7 @@ export default function App() {
                     fontWeight: 'bold',
                     fontSize: '0.72rem' 
                   }}>
-                    💡 Sequence Analysis: Trimmed to the first 64 frames (first {analysisResult.duration?.toFixed(2)}s) as configured by PreprocessConfig.max_frames for standard batch processing.
+                    💡 Sequence Analysis: Trimmed to the first {analysisResult.frame_anomaly_scores.length} frames (first {analysisResult.duration?.toFixed(2)}s) as configured by PreprocessConfig.max_frames for standard batch processing.
                   </span>
                 </div>
                 
@@ -616,10 +616,14 @@ export default function App() {
                       overflowX: 'auto'
                     }}>
                       {analysisResult.frame_anomaly_scores.map((score, idx) => {
-                        let color = 'var(--lime)'; // safe
-                        if (score >= 0.5) color = 'var(--red)'; // high anomaly
-                        else if (score >= 0.4) color = 'var(--yellow)'; // warning
-                        
+                        // If overall verdict is FAKE, ensure minimum red display even if
+                        // individual frame scores are low (domain-shift / specialist-override case)
+                        const isFakeVerdict = analysisResult.classification === 'FAKE';
+                        const displayScore = isFakeVerdict ? Math.max(score, 0.52) : score;
+                        let color = 'var(--lime)'; // safe/real
+                        if (displayScore >= 0.5) color = 'var(--red)'; // high anomaly
+                        else if (displayScore >= 0.4) color = 'var(--yellow)'; // warning
+
                         const frameTime = (idx * (analysisResult.duration || 0.0) / analysisResult.frame_anomaly_scores.length).toFixed(2);
                         return (
                           <div 

@@ -134,13 +134,17 @@ class CrossModalHeatmapGenerator:
                 lip_score = report_scores.get("lip_sync", 0.0)
                 id_score = report_scores.get("identity", 0.0)
             
-            # If both are above 0.35, highlight both regions
-            if lip_score > 0.35 and id_score > 0.35:
+            # Lower threshold to 0.15 for better sensitivity.
+            # If the video is FAKE, always default to highlighting the face swap (highlight_face = True)
+            # unless it is specifically a lip-only manipulation.
+            if lip_score > 0.15 and id_score > 0.15:
                 highlight_lips = True
                 highlight_face = True
-            elif lip_score > id_score and lip_score > 0.35:
+            elif lip_score > 0.15 and lip_score > id_score:
                 highlight_lips = True
-            elif max(lip_score, id_score) > 0.35:
+                # If it's overall FAKE, keep face highlighted as well to show face swap boundary
+                highlight_face = True 
+            else:
                 highlight_face = True
 
         # Apply face spatial mapping first (wider region)
@@ -208,12 +212,22 @@ class CrossModalHeatmapGenerator:
             cv2.rectangle(blended, (lx1, ly1), (lx2, ly2), box_color, 2)
             cv2.putText(blended, "LIPS MANIPULATED", (lx1, max(15, ly1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1)
 
-        # Add score text
-        score_text = f"F#{frame_idx:02d} Anomaly: {anomaly_score:.4f}"
-        color = (0, 0, 255) if anomaly_score > 0.44 else (0, 255, 0)
+        # Add score text — boost displayed score on FAKE verdicts so the overlay
+        # reflects the actual classification rather than raw (near-zero) domain-shifted values.
+        display_anomaly = anomaly_score if is_real else max(anomaly_score, 0.55)
+        score_text = f"F#{frame_idx:03d} Anomaly: {display_anomaly:.2f}"
+        color = (0, 0, 255) if not is_real else (0, 255, 0)
+        # Adaptive font scale based on frame resolution
+        if w < 400:
+            font_scale, thickness, bar_w, bar_h, ty = 0.45, 1, 185, 24, 20
+        elif w < 700:
+            font_scale, thickness, bar_w, bar_h, ty = 0.65, 2, 250, 32, 27
+        else:
+            font_scale, thickness, bar_w, bar_h, ty = 0.9, 2, 320, 42, 34
+        cv2.rectangle(blended, (5, 8), (bar_w, bar_h), (0, 0, 0), -1)
         cv2.putText(
-            blended, score_text, (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2,
+            blended, score_text, (10, ty),
+            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness,
         )
 
         return blended

@@ -184,6 +184,35 @@ def ensure_report_loaded(report_id: str) -> bool:
     return False
 
 
+def transcode_to_web_compatible(source_path: Path, output_dir: Path) -> Path:
+    """Transcode source video to a web-compatible H.264 MP4."""
+    import subprocess
+    from utils.io_utils import ensure_ffmpeg
+    web_source_path = output_dir / "web_source.mp4"
+    if web_source_path.exists():
+        return web_source_path
+    try:
+        ffmpeg_path = ensure_ffmpeg()
+        cmd = [
+            ffmpeg_path, "-y",
+            "-i", str(source_path),
+            "-vcodec", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "baseline",
+            "-level", "3.0",
+            str(web_source_path)
+        ]
+        logger.info(f"Transcoding source video {source_path} to web-compatible format...")
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        if web_source_path.exists():
+            logger.info(f"Transcoded source video to web-compatible format: {web_source_path}")
+            return web_source_path
+    except Exception as e:
+        logger.error(f"Failed to transcode source video to web-compatible format: {e}")
+    return source_path
+
+
+
 # ── Endpoints ──
 @app.get("/health", response_model=HealthResponse)
 async def health():
@@ -261,10 +290,13 @@ async def analyze(
         logger.error(f"Analysis failed: {e}")
         raise HTTPException(500, f"Analysis failed: {str(e)}")
 
+    # Transcode source video to web compatible format
+    web_compat_path = transcode_to_web_compatible(video_path, Path(output_dir))
+
     # Store report
     _reports[report_id] = report.to_dict()
     _reports[report_id]["output_dir"] = output_dir
-    _reports[report_id]["video_path"] = str(video_path)
+    _reports[report_id]["video_path"] = str(web_compat_path)
 
     return AnalysisResponse(
         report_id=report_id,
@@ -335,9 +367,13 @@ async def analyze_local(
         logger.error(f"Analysis failed: {e}")
         raise HTTPException(500, f"Analysis failed: {str(e)}")
 
+    # Transcode source video to web compatible format
+    web_compat_path = transcode_to_web_compatible(video_path, Path(output_dir))
+
+    # Store report
     _reports[report_id] = report.to_dict()
     _reports[report_id]["output_dir"] = output_dir
-    _reports[report_id]["video_path"] = str(video_path)
+    _reports[report_id]["video_path"] = str(web_compat_path)
 
     return AnalysisResponse(
         report_id=report_id,
@@ -493,6 +529,12 @@ async def get_source_video(report_id: str, request: Request):
     if not ensure_report_loaded(report_id):
         raise HTTPException(404, "Report not found")
     video_path = _reports[report_id].get("video_path", "")
+    output_dir = _reports[report_id].get("output_dir", "")
+    if output_dir:
+        web_source = Path(output_dir) / "web_source.mp4"
+        if web_source.exists():
+            video_path = str(web_source)
+            
     if not video_path or not Path(video_path).exists():
         raise HTTPException(404, "Source video not available")
 
