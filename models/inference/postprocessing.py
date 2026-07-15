@@ -41,6 +41,7 @@ class ForensicReport:
 
     # Per-frame anomaly scores
     frame_anomaly_scores: List[float] = field(default_factory=list)
+    raw_frame_anomaly_scores: List[float] = field(default_factory=list)
 
     # Metadata
     video_path: str = ""
@@ -177,6 +178,7 @@ class PostProcessor:
             # the frame scores proportionally to prevent false-alarm red blocks on real videos.
             factor = min(1.0, prob / self.threshold) if prob < self.threshold else 1.0
             report.frame_anomaly_scores = [float(s * factor) for s in raw_scores]
+            report.raw_frame_anomaly_scores = list(report.frame_anomaly_scores)
 
         # Temporal boundaries from TFBD
         if forensic_output.boundary_tags is not None and timestamps:

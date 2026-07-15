@@ -233,7 +233,7 @@ class ForensicInferencePipeline:
             # Select key frames (top 5 highest anomaly scores) for HTML report embedding
             key_frames = []
             if generate_heatmap and report.frame_anomaly_scores:
-                scores = np.array(report.frame_anomaly_scores)
+                scores = np.array(getattr(report, "raw_frame_anomaly_scores", report.frame_anomaly_scores))
                 # Get indices of top 5 highest anomaly scores
                 top_indices = np.argsort(scores)[-5:][::-1]
                 # Sort indices chronologically
@@ -262,7 +262,7 @@ class ForensicInferencePipeline:
                 heatmap_path = str(output_path / "heatmap_overlay.mp4")
                 self.heatmap_generator.generate_video(
                     preprocessed.frames,
-                    report.frame_anomaly_scores,
+                    getattr(report, "raw_frame_anomaly_scores", report.frame_anomaly_scores),
                     heatmap_path,
                     face_detections=preprocessed.face_detections,
                     report_scores=report.to_dict()["scores"],
