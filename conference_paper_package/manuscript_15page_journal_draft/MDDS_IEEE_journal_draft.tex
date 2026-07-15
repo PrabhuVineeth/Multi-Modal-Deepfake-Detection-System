@@ -388,32 +388,27 @@ Although the overall classifier probability was low ($0.0901$), the Visual Ident
 \label{fig:confusion_matrix_lavdf}
 \end{figure}
 
+\begin{figure*}[htbp]
+\centering
+\includegraphics[width=0.49\linewidth]{verdict_dashboard_main.png}
+\hfill
+\includegraphics[width=0.49\linewidth]{verdict_dashboard_timeline.png}
+\caption{Real user interface dashboard of the MDDS deployment. Left: Top panel showing video preview, overall verdict, and normalized component anomaly scores (lip sync, visual identity, temporal continuity, and audio-video synchronization). Right: Bottom panel displaying the pre-frame timeline and localized boundary detections.}
+\label{fig:mdds_dashboard_ui}
+\end{figure*}
+
 \begin{figure}[htbp]
 \centering
-\begin{tikzpicture}[scale=0.9]
-    % Outer container (mock video player)
-    \draw[thick, fill=black!5] (0,0) rectangle (6,4.5);
-    % Title bar
-    \draw[thick, fill=gray!30] (0,4.1) rectangle (6,4.5);
-    \node at (3, 4.3) {\small \textbf{Forensic Heatmap Overlay - Frame 45}};
-    
-    % Sample face bounding box (dashed)
-    \draw[red, ultra thick] (1.5, 1.0) rectangle (4.5, 3.8);
-    \node[red, above] at (3, 3.8) {\small \textbf{FACE SWAPPED (96.5\% confidence)}};
-    
-    % Mouth region highlighted (lip sync anomaly)
-    \draw[yellow, ultra thick, dashed] (2.2, 1.4) rectangle (3.8, 2.0);
-    \node[yellow, below] at (3, 1.4) {\scriptsize \textbf{LIPS NORMAL}};
-    
-    % Timeline bar at the bottom
-    \draw[thick, fill=gray!10] (0.5, 0.3) rectangle (5.5, 0.7);
-    \draw[fill=red!60] (0.5, 0.3) rectangle (2.5, 0.7);
-    \draw[fill=green!60] (2.5, 0.3) rectangle (4.2, 0.7);
-    \draw[fill=red!60] (4.2, 0.3) rectangle (5.5, 0.7);
-    \node at (3, 0.1) {\tiny Timeline Index (Red = Fake, Green = Real)};
-\end{tikzpicture}
-\caption{Simulated graphical output of the MDDS explainability overlay. The system renders spatial anomalies (red bounding box) alongside the aligned timeline segments (bottom bar).}
-\label{fig:explainability_visual_output}
+\includegraphics[width=0.85\linewidth]{modality_ablation_results.png}
+\caption{Ablation performance comparisons showing AUC/F1-score gains from joint multi-modal fusion vs. single-modality channels.}
+\label{fig:ablation_results_chart}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\linewidth]{system_performance_charts.png}
+\caption{Validation system metrics including Expected Calibration Error (ECE), training curves, and threshold distribution profiles across FakeAVCeleb and LAV-DF splits.}
+\label{fig:system_performance_charts}
 \end{figure}
 
 \section{Discussion and Limitations}
