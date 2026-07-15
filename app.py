@@ -149,6 +149,41 @@ def auto_detect_dataset(video_path: Path, filename: str) -> str:
     return "fakeavceleb"
 
 
+def ensure_report_loaded(report_id: str) -> bool:
+    """Ensure the report is loaded from disk into memory if available."""
+    if report_id in _reports:
+        return True
+    
+    # Try loading from filesystem
+    json_path = path_config.output_dir / "reports" / report_id / "forensic_report.json"
+    if json_path.exists():
+        try:
+            import json
+            with open(json_path, "r") as f:
+                report_data = json.load(f)
+            
+            # The original video path can be found in metadata or we can find it in the uploads folder
+            video_path = report_data.get("metadata", {}).get("video_path", "")
+            if not video_path or not Path(video_path).exists():
+                # Try finding it in uploads folder
+                upload_dir = path_config.output_dir / "uploads" / report_id
+                if upload_dir.exists():
+                    for p in upload_dir.glob("*"):
+                        if p.suffix.lower() in ALLOWED_EXTENSIONS:
+                            video_path = str(p)
+                            break
+            
+            _reports[report_id] = report_data
+            _reports[report_id]["output_dir"] = str(json_path.parent)
+            _reports[report_id]["video_path"] = str(video_path)
+            logger.info(f"Loaded report {report_id} from disk: video_path={video_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load report {report_id} from disk: {e}")
+            
+    return False
+
+
 # ── Endpoints ──
 @app.get("/health", response_model=HealthResponse)
 async def health():
@@ -392,7 +427,7 @@ async def analyze_quick(
 @app.get("/report/{report_id}")
 async def get_report(report_id: str):
     """Retrieve a previously generated forensic report."""
-    if report_id not in _reports:
+    if not ensure_report_loaded(report_id):
         raise HTTPException(404, "Report not found")
     return JSONResponse(_reports[report_id])
 
@@ -400,7 +435,7 @@ async def get_report(report_id: str):
 @app.api_route("/heatmap/{report_id}", methods=["GET", "HEAD"])
 async def get_heatmap(report_id: str, request: Request):
     """Stream the heatmap overlay video with range-request support."""
-    if report_id not in _reports:
+    if not ensure_report_loaded(report_id):
         raise HTTPException(404, "Report not found")
 
     output_dir = _reports[report_id].get("output_dir", "")
@@ -455,7 +490,7 @@ async def get_heatmap(report_id: str, request: Request):
 @app.api_route("/video/{report_id}", methods=["GET", "HEAD"])
 async def get_source_video(report_id: str, request: Request):
     """Stream the original source video for a report with range-request support."""
-    if report_id not in _reports:
+    if not ensure_report_loaded(report_id):
         raise HTTPException(404, "Report not found")
     video_path = _reports[report_id].get("video_path", "")
     if not video_path or not Path(video_path).exists():

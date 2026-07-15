@@ -55,6 +55,7 @@ class CrossModalHeatmapGenerator:
         mismatch_maps: Optional[Dict[str, List[float]]] = None,
         face_detections: Optional[List[List[Any]]] = None,
         report_scores: Optional[Dict[str, float]] = None,
+        is_real: bool = False,
     ) -> List[np.ndarray]:
         """
         Generate heatmap overlay frames with spatial landmarks highlighting.
@@ -65,6 +66,7 @@ class CrossModalHeatmapGenerator:
             mismatch_maps: Optional per-channel scores for multi-layer heatmaps.
             face_detections: List of face detections per frame.
             report_scores: Dict of components' scores.
+            is_real: Whether the video overall is classified as REAL.
 
         Returns:
             List of BGR frames with heatmap overlays.
@@ -74,7 +76,7 @@ class CrossModalHeatmapGenerator:
         heatmap_frames = []
         for i, (frame, score) in enumerate(zip(frames, anomaly_scores)):
             detection = face_detections[i] if face_detections and i < len(face_detections) else None
-            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores, frame_idx=i)
+            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores, frame_idx=i, is_real=is_real)
             heatmap_frames.append(overlay)
 
         return heatmap_frames
@@ -86,6 +88,7 @@ class CrossModalHeatmapGenerator:
         detection: Optional[List[Any]] = None,
         report_scores: Optional[Dict[str, float]] = None,
         frame_idx: int = 0,
+        is_real: bool = False,
     ) -> np.ndarray:
         """
         Create a single heatmap overlay highlighting only the manipulated area.
@@ -105,7 +108,7 @@ class CrossModalHeatmapGenerator:
         # Decide what regions to highlight (mouth vs whole face vs both)
         highlight_lips = False
         highlight_face = False
-        if detection and len(detection) > 0 and anomaly_score > 0.05:
+        if not is_real and detection and len(detection) > 0 and anomaly_score > 0.05:
             lip_score = 0.0
             id_score = 0.0
             if report_scores:
@@ -204,6 +207,7 @@ class CrossModalHeatmapGenerator:
         mismatch_maps: Optional[Dict[str, List[float]]] = None,
         face_detections: Optional[List[List[Any]]] = None,
         report_scores: Optional[Dict[str, float]] = None,
+        is_real: bool = False,
     ) -> str:
         """
         Generate and save a spatial-aware heatmap overlay video.
@@ -215,6 +219,7 @@ class CrossModalHeatmapGenerator:
             mismatch_maps: Optional multi-channel scores.
             face_detections: Optional face coordinates.
             report_scores: Optional components' scores.
+            is_real: Whether the video overall is classified as REAL.
 
         Returns:
             Path to the saved video.
@@ -227,7 +232,8 @@ class CrossModalHeatmapGenerator:
             anomaly_scores,
             mismatch_maps,
             face_detections=face_detections,
-            report_scores=report_scores
+            report_scores=report_scores,
+            is_real=is_real
         )
 
         if not heatmap_frames:

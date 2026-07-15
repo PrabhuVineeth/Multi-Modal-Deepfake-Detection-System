@@ -248,7 +248,8 @@ class ForensicInferencePipeline:
                             score,
                             detection=detection,
                             report_scores=report.to_dict()["scores"],
-                            frame_idx=idx
+                            frame_idx=idx,
+                            is_real=(report.classification == "REAL")
                         )
                         key_frames.append(overlay)
                         
@@ -264,7 +265,8 @@ class ForensicInferencePipeline:
                     report.frame_anomaly_scores,
                     heatmap_path,
                     face_detections=preprocessed.face_detections,
-                    report_scores=report.to_dict()["scores"]
+                    report_scores=report.to_dict()["scores"],
+                    is_real=(report.classification == "REAL")
                 )
 
         logger.info(

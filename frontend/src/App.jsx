@@ -419,14 +419,36 @@ export default function App() {
 
             {/* Smart routing info card */}
             <div className="brutal-card" style={{ marginBottom: '2.5rem', borderLeft: '4px solid var(--yellow)' }}>
-              <div className="card-title" style={{ color: 'var(--yellow)', fontSize: '0.9rem' }}>Smart Automatic Routing (Enabled)</div>
+              <div className="card-title" style={{ color: 'var(--yellow)', fontSize: '0.9rem' }}>Forensic Routing Model Configuration</div>
               <div className="card-content" style={{ fontSize: '0.78rem' }}>
-                Manual route selectors have been eliminated. Upon submitting, the system will check the media:
-                <ul style={{ margin: '0.5rem 0 0 1rem', paddingLeft: '0.5rem', listStyleType: 'square' }}>
-                  <li><strong>Silent Video:</strong> FaceForensics++ (Visual-only model)</li>
-                  <li><strong>Speech Video:</strong> Multimodal routing</li>
-                  <li><strong>LAV-DF naming schema (digits/explicit lavdf tag):</strong> Optimized temporal boundary model</li>
-                </ul>
+                <div style={{ marginBottom: '1rem' }}>
+                  Select the underlying forensic neural network architecture to load:
+                </div>
+                <select
+                  value={selectedDataset}
+                  onChange={(e) => setSelectedDataset(e.target.value)}
+                  style={{
+                    width: '100%',
+                    background: '#000',
+                    color: 'var(--yellow)',
+                    border: '3px solid var(--border)',
+                    padding: '0.8rem',
+                    fontFamily: 'monospace',
+                    fontSize: '0.8rem',
+                    fontWeight: 'bold',
+                    marginBottom: '1rem',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="auto">Auto-detect Model (Recommended)</option>
+                  <option value="faceforensics">FaceForensics++ Checkpoint (Visual-only detection)</option>
+                  <option value="fakeavceleb">FakeAVCeleb Checkpoint (Multimodal speech/lips detection)</option>
+                  <option value="lavdf">LAV-DF Checkpoint (Temporal Boundary forgery detection)</option>
+                </select>
+                <div style={{ color: 'var(--muted)', fontSize: '0.72rem' }}>
+                  * Automatic routing analyzes audio streams and filenames to decide. Manually selecting a model overrides automatic detection (useful for visual-only fakes that contain silent audio).
+                </div>
               </div>
             </div>
 
