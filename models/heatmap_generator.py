@@ -73,9 +73,28 @@ class CrossModalHeatmapGenerator:
         """
         logger.info(f"Generating spatial-aware heatmap overlays for {len(frames)} frames")
 
+        # Forward/backward fill face detections to prevent gaps and missing highlights at the start
+        filled_detections = []
+        if face_detections:
+            first_valid = None
+            for det in face_detections:
+                if det and len(det) > 0:
+                    first_valid = det
+                    break
+            
+            last_valid = None
+            for det in face_detections:
+                if det and len(det) > 0:
+                    last_valid = det
+                    filled_detections.append(det)
+                else:
+                    filled_detections.append(last_valid or first_valid)
+        else:
+            filled_detections = [None] * len(frames)
+
         heatmap_frames = []
         for i, (frame, score) in enumerate(zip(frames, anomaly_scores)):
-            detection = face_detections[i] if face_detections and i < len(face_detections) else None
+            detection = filled_detections[i] if i < len(filled_detections) else None
             overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores, frame_idx=i, is_real=is_real)
             heatmap_frames.append(overlay)
 

@@ -497,20 +497,47 @@ async def get_source_video(report_id: str, request: Request):
         raise HTTPException(404, "Source video not available")
 
     file_size = Path(video_path).stat().st_size
+    range_header = request.headers.get("range")
+
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": "video/mp4",
         "Content-Length": str(file_size),
+        "Cache-Control": "no-cache",
     }
 
     if request.method == "HEAD":
         return Response(headers=headers)
 
-    return FileResponse(
-        str(video_path),
-        media_type="video/mp4",
-        headers={"Accept-Ranges": "bytes"},
-    )
+    if range_header:
+        start, end = 0, file_size - 1
+        ranges = range_header.replace("bytes=", "").split("-")
+        start = int(ranges[0]) if ranges[0] else 0
+        end = int(ranges[1]) if ranges[1] else file_size - 1
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        async def ranged_file():
+            async with aiofiles.open(str(video_path), "rb") as f:
+                await f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = await f.read(min(65536, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        headers["Content-Length"] = str(chunk_size)
+        return StreamingResponse(ranged_file(), status_code=206, headers=headers)
+
+    async def full_file():
+        async with aiofiles.open(str(video_path), "rb") as f:
+            while chunk := await f.read(65536):
+                yield chunk
+
+    return StreamingResponse(full_file(), headers=headers)
 
 
 def _validate_upload(video: UploadFile):

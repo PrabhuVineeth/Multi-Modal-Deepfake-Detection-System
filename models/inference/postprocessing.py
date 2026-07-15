@@ -201,6 +201,17 @@ class PostProcessor:
                 b.tag == "FAKE" for b in boundaries
             )
 
+            # Align frame_anomaly_scores with CRF tags to prevent visual contradictions
+            tag_list = tags.cpu().numpy().flatten().tolist()
+            for idx in range(min(len(report.frame_anomaly_scores), len(tag_list))):
+                tag_val = int(tag_list[idx])
+                if tag_val == 0:  # REAL
+                    report.frame_anomaly_scores[idx] = min(0.09, report.frame_anomaly_scores[idx])
+                elif tag_val == 2:  # BOUNDARY
+                    report.frame_anomaly_scores[idx] = 0.42
+                elif tag_val == 1:  # FAKE
+                    report.frame_anomaly_scores[idx] = max(0.55, report.frame_anomaly_scores[idx])
+
         logger.info(
             f"Report generated: {report.classification} "
             f"(confidence={report.confidence:.1f}%)"
