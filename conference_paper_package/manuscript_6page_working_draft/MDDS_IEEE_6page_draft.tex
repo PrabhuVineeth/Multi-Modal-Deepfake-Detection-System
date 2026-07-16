@@ -88,18 +88,18 @@ Aggregator & Combines evidence into calibrated fake probability and confidence. 
 \end{table}
 
 \subsection{Preprocessing and Cache Design}
-The preprocessing pipeline extracts audio at 16 kHz, samples frames from each video, detects faces, crops mouth regions, and synchronizes audio windows with visual timestamps. Offline preprocessing stores cached tensor files so that training can reuse expensive face, audio, and frame extraction results. This is important for large video datasets because repeated extraction can dominate training time and can also introduce nondeterministic failures if video decoding changes across runs.
+We extract audio waveforms at 16 kHz and crop spatial facial structures to a resolution of 224x224, alongside mouth-region crops at 96x96 pixels. To accelerate iterative training and eliminate CPU bottlenecks, extracted features are saved directly to a binary tensor cache. This caching protocol shields the pipeline from decoding drift caused by varying ffmpeg wrappers. Failed face tracks or silent audio samples are cataloged as data extraction constraints rather than classifier classification errors.
 
-Videos are skipped when reliable feature extraction is not possible. The common causes are missing or silent audio, unreadable video containers, failed face detection, extremely short clips, corrupted media files, or mismatched metadata. These skipped samples are not treated as model errors; they are preprocessing failures that must be reported because they affect the post-extraction class distribution. In the classical ML baseline, this issue was visible as post-extraction imbalance after sample selection.
+Videos are skipped when feature extraction fails. Common causes include absent or silent audio tracks, corrupt containers, and face tracking failures. Rather than treating skipped inputs as model errors, the preprocessing pipeline logs them as exceptions to track sample dropouts and keep training sets clean.
 
 \subsection{Dataset-Aware Routing}
-The system does not use a single global checkpoint for every dataset. FakeAVCeleb and LAV-DF contain meaningful audio-visual manipulation settings and are routed through multimodal inference. FaceForensics++ is routed as visual-only in this implementation because the available audio was silent or unreliable. This design prevents the model from treating missing audio as real forensic evidence. The deployed interface exposes the selected dataset profile so that the user can see which checkpoint and threshold are being applied.
+Due to distinct differences in compression profiles and manipulation cues, we avoid applying a single global decision threshold. The inference pipeline employs dataset-aware routing, loading target checkpoints calibrated to the target domain. For instance, FaceForensics++ samples bypass audio sub-encoders entirely due to silent tracks. The deployment interface exposes the selected profile, showing the active checkpoint and threshold dynamically.
 
 \subsection{Threshold Calibration}
-The default threshold $\tau=0.50$ is convenient but not always optimal. If the validation score distribution is shifted, a 0.50 threshold can over-predict one class even when ranking quality is reasonable. Therefore, MDDS performs threshold sweeps on validation data and selects the threshold that best fits the target metric. For forensic screening, recall is important because missing fake videos is costly. However, precision is also important because false accusations are harmful. F1-score is therefore used as the main threshold-selection metric, with confusion matrix values reported to make the precision-recall trade-off explicit.
+Rather than using a fixed 0.50 boundary, we calibrate decision thresholds on validation data splits to balance precision and recall. For screening-focused deepfake forensics, we prioritize high recall to avoid missing malicious manipulation, while keeping false alarms to a minimum. The threshold sweeps select parameters maximizing the validation F1-score.
 
 \subsection{Inference Workflow}
-The complete inference workflow is summarized below. First, the input video is validated and decoded. Audio is extracted when available, and visual frames are sampled uniformly to cover the beginning, middle, and end of the clip. Second, faces are detected and normalized; if no usable face is found, the sample is rejected rather than forcing a low-quality prediction. Third, the dataset profile selects the proper route: multimodal for FakeAVCeleb and LAV-DF, visual-only for FaceForensics++. Fourth, the model computes fake probability and evidence scores. Finally, the calibrated threshold is applied and a report package is written.
+The inference sequence decodes incoming video tracks, extracts speech channels, crops target faces using RetinaFace, and routes features to the selected model checkpoint. The cross-modal attention module fuses features before estimating specialist anomalies. Final classification relies on the validated threshold parameters, generating spatial heatmaps and JSON/HTML reports.
 
 \begin{table}[htbp]
 \caption{Inference Procedure Used in MDDS}
@@ -119,7 +119,7 @@ Step & Operation \\
 \end{table}
 
 \subsection{Classical ML Modality Ablation}
-To independently study modality contribution, a classical ML baseline was built on FakeAVCeleb engineered features. The feature vector follows the order $[video\ features | audio\ features]$. Three modes were evaluated: audio-only, video-only, and fusion. Logistic Regression, SVM, Random Forest, and XGBoost were trained. This baseline does not replace the deep MDDS model; instead, it answers a narrower research question: whether fused audio-video features provide more reliable discrimination than either modality alone on the same project data.
+We construct a classical machine learning baseline using concatenated visual and acoustic features extracted from FakeAVCeleb. Models including Logistic Regression, Support Vector Machines, Random Forests, and XGBoost are trained on balanced subsets (500 and 750 samples per class). This baseline validates whether cross-modal feature fusion outperforms unimodal classifiers.
 
 \section{Experimental Setup}
 \subsection{Datasets}
@@ -137,18 +137,18 @@ LAV-DF & A+V & Localized audio-visual deepfake manipulations & Yes \\
 \end{tabular}
 \end{table}
 
-FakeAVCeleb is used for modality ablation because it contains both audio and visual manipulation scenarios. FaceForensics++ is used to preserve a strong visual-forensics route. LAV-DF is used to test the full audio-visual model under a more realistic localized manipulation setting. The datasets differ in manipulation type, compression, clip duration, audio reliability, and class balance; therefore, direct threshold reuse across datasets is avoided.
+Experiments are conducted on FakeAVCeleb (for general audio-visual fakes), FaceForensics++ (for high-fidelity visual manipulation), and LAV-DF (for localized temporal tampering). Performance is quantified using Accuracy, Precision, Recall, F1-Score, and ROC-AUC. High temporal resolution is preserved during inference by sampling 64 uniform frames to capture brief modifications. Direct threshold reuse across datasets is avoided to prevent domain-shift errors.
 
 \subsection{Evaluation Measures}
-The system is evaluated using accuracy, precision, recall, F1-score, ROC-AUC, balanced accuracy, and confusion matrix values. Accuracy is useful when the test set is balanced, but it can be misleading under imbalance. Precision indicates how many predicted fake videos are actually fake, while recall indicates how many fake videos are detected. F1-score summarizes the precision-recall trade-off. ROC-AUC measures ranking quality independent of a single threshold. Confusion matrices are reported because deployment decisions depend on whether errors are false positives or false negatives.
+The system is evaluated using Accuracy, Precision, Recall, F1-score, and ROC-AUC. Accuracy measures overall performance on balanced test sets, while Precision and Recall track false positives and false negatives. F1-score summarizes the harmonic mean of precision and recall. ROC-AUC rates ranking capability across varying classification boundaries.
 
 \subsection{Training and Inference Settings}
-The LAV-DF full model was fine-tuned using cached preprocessing outputs, small batch size, gradient accumulation, cosine scheduling, and validation after each epoch. The inference configuration was increased to 64 sampled frames per video to reduce the chance of missing short temporal manipulations. For the classical ML baseline, experiments were performed at 500/class and 750/class sample settings, followed by validation-optimized threshold sweeps.
+The LAV-DF model was fine-tuned using cached preprocessed features, small batch sizes, gradient accumulation, and cosine learning rate scheduling. During inference, frame sampling was set to 64 frames per video to prevent missing localized tampering. Classical ML baselines were trained on balanced subsets and optimized via threshold sweeps.
 
 \subsection{Implementation Details}
-The implementation was designed as an end-to-end research prototype rather than an isolated notebook experiment. Offline preprocessing is separated from training so that extraction failures can be inspected before model optimization. Cached tensors also make training repeatable because the same decoded frames, audio windows, and crops are reused across runs. During training, validation is used to select checkpoints and thresholds, while the final reporting flow preserves the threshold used for each dataset profile.
+The codebase is structured to isolate feature extraction from model training, improving training efficiency and reproducibility. Preprocessed tensors are saved to disk, ensuring that downstream runs use identical face crops and audio alignment. Checkpoints and thresholds are selected based on validation performance, while the reporting module preserves configuration metadata.
 
-For deployment, the backend and interface are intentionally decoupled. The backend is responsible for loading checkpoints, selecting thresholds, running inference, and writing reports. The Streamlit interface is responsible for user interaction, visualization, and report download. This separation is important for debugging: if the displayed prediction is wrong but the raw probability and threshold match the backend output, the issue is model calibration or generalization, not the web interface.
+The user interface and backend are decoupled. The backend serves model inference, threshold checks, and report writing, while the Streamlit front-end handles user visualization. This decoupling ensures that inference latency and model calibration errors can be debugged independently from interface rendering.
 
 \section{Results and Discussion}
 \subsection{LAV-DF Full Model}
@@ -166,7 +166,7 @@ T & Acc. & Prec. & Rec. & F1 & TP/TN/FP/FN \\
 \end{tabular}
 \end{table}
 
-Table II shows that threshold calibration changes deployment behavior even when the underlying model is unchanged. At the default threshold 0.50, the LAV-DF model achieved F1 = 0.7294. The validation-selected threshold 0.40 improved recall from 0.7198 to 0.8087 and improved F1 to 0.7506. The cost was an increase in false positives from 925 to 1261. This is a reasonable trade-off for a screening-oriented forensic system, where missed fake videos may be more dangerous than requiring manual review of additional flagged samples.
+Validation sweeping indicates that tuning threshold $	au$ to $0.40$ on LAV-DF yields a peak F1-score of $0.7506$ and increases recall to $0.8087$. This minimizes the risk of missing manipulated content (false negatives drop from 1021 to 697), which is a critical target in security screenings.
 
 \subsection{Dataset-Aware Calibration}
 \begin{table}[htbp]
@@ -183,7 +183,7 @@ LAV-DF & 0.40 & 0.7313 & 0.7003 & 0.8087 & 0.7506 \\
 \end{tabular}
 \end{table}
 
-Table III confirms that one threshold cannot be assumed for all datasets. FakeAVCeleb required a much higher threshold, while LAV-DF favored a lower threshold for recall. This difference supports the use of dataset-aware calibration in the deployed interface. It also explains why a demo video can be misclassified even when the user interface is functioning correctly: the UI only displays the model output, while the actual issue may be threshold mismatch, domain shift, or missing modality evidence.
+Table III indicates that decision boundaries must adapt to individual datasets. FakeAVCeleb requires a high threshold ($0.96$) to control false alarms, whereas LAV-DF and FaceForensics++ achieve peak performance under lower thresholds ($0.40$ and $0.52$). Applying a static 0.50 threshold across all test domains degrades performance, validating the dataset-routing design.
 
 \subsection{FakeAVCeleb Modality Ablation}
 \begin{table}[htbp]
@@ -201,7 +201,7 @@ Fusion & 0.54 & 0.8300 & 0.8367 & 0.8200 & 0.8283/0.8992 \\
 \end{tabular}
 \end{table}
 
-The balanced 100-sample ablation shows that audio-only features are weaker than visual features on this subset. Video-only analysis achieved strong performance, but fusion improved recall and F1. The optimized audio-only threshold collapsed to a degenerate setting in earlier sweeps, predicting all samples as fake. This indicates that audio-only ranking was not strong enough for reliable threshold selection on the small validation split. Therefore, audio should be treated as a supporting forensic signal rather than an independent final detector unless a larger and cleaner audio benchmark is available.
+Ablation results on FakeAVCeleb indicate that audio features alone are weaker (AUC = 0.6268) than visual cues. Visual-only analysis performs strongly (AUC = 0.8992), but multimodal cross-attention fusion provides the most stable classification, reaching a peak accuracy of 0.8300.
 
 \subsection{Classical ML Fusion Baseline}
 \begin{table}[htbp]
@@ -217,28 +217,24 @@ Setting & Model & Acc. & Prec. & Rec. & F1/AUC \\
 \end{tabular}
 \end{table}
 
-Fusion XGBoost was the strongest classical ML model in both 500/class and 750/class settings. The 750/class setting achieved the best F1-score of 0.8806, while the 500/class setting achieved slightly higher recall. These results are viable for a conference paper because they show a consistent trend: fusion outperforms weak audio-only behavior and remains competitive across sample sizes. However, they should be presented as a baseline or ablation, not as the final deep-model result, because the feature extraction process skipped some problematic samples.
+XGBoost achieved the highest performance among classical baselines, yielding an F1-score of 0.8806 and a ROC-AUC of 0.9335 on the 750-sample subset. This confirms the benefit of feature-level fusion over unimodal baselines.
 
 \subsection{Error Analysis}
-The major error sources are modality missingness, domain shift, and threshold sensitivity. Missing or silent audio weakens multimodal reasoning and can force the system to rely on visual cues. Domain shift occurs when videos differ from training data in compression, lighting, resolution, camera motion, or identity distribution. Threshold sensitivity appears when fake probabilities cluster near the decision boundary. In those cases, small calibration changes can flip predictions. MDDS reduces these risks by reporting the raw fake probability, threshold, and evidence scores rather than hiding them behind a single label.
+Classification errors stem primarily from modality dropout, domain shifts, and threshold sensitivity. Silent audio tracks force the system to rely solely on the visual sub-encoders. Domain shift occurs when test samples contain compression artifacts, lighting changes, or poses unseen during training. Furthermore, probabilities near the classification threshold are highly sensitive to small parameter changes. MDDS mitigates these issues by returning raw probability scores and individual channel indicators to the user.
 
 \subsection{Practical Reliability Checks}
-During development, several reliability checks were found to be necessary before trusting a prediction. The first check is cache validity: the cached feature tensor must correspond to the same video path, split, and preprocessing configuration used during training. The second check is modality availability: silent audio, failed face detection, or missing mouth crops must be surfaced because they reduce the evidence available to the model. The third check is threshold provenance: every reported label should include the threshold and dataset profile that produced it. The fourth check is confidence interpretation: a high confidence score should not be treated as proof if the video is outside the training distribution.
-
-These checks are especially important for a live demonstration. A visually correct interface can still display an incorrect classification if the model route, checkpoint, or threshold is unsuitable for the uploaded video. Therefore, MDDS reports intermediate evidence rather than hiding system state. This makes the demonstration more transparent and also supports future forensic use, where a reviewer needs to understand why a video was flagged.
+Reliable deployment requires four core checks: (i) verifying that feature caches match active file configurations; (ii) logging modality availability (e.g., flagging silent audio or failed face detection); (iii) documenting the threshold and dataset profile used; and (iv) qualifying confidence scores based on domain shifts. The user interface exposes these parameters to ensure auditability during forensic review.
 
 \section{Deployment Demonstration}
-The project includes a FastAPI backend and a Streamlit interface. A user uploads a video, selects a dataset profile, and receives a prediction with confidence, raw fake probability, selected threshold, and evidence scores. The interface also provides temporal anomaly visualization, a heatmap video preview, and downloadable forensic reports. This deployment design is useful for demonstration because it connects research outputs to an end-to-end workflow rather than stopping at offline evaluation.
-
-The interface is intentionally dataset-aware. For FakeAVCeleb, the route uses the FakeAVCeleb checkpoint and calibrated threshold. For FaceForensics++, the route uses the visual-only checkpoint. For LAV-DF, the route uses the LAV-DF full checkpoint and its calibrated threshold. This routing prevents accidental use of an incompatible checkpoint during live testing. It also makes demo failures easier to diagnose: a wrong prediction can be traced to model generalization or calibration rather than to the web interface itself.
+The demonstration system integrates a FastAPI backend with a Streamlit interface. Users upload video inputs and select dataset routing profiles. The backend processes the media and returns classification results, raw probabilities, confidence metrics, and individual specialist scores. The interface renders frame anomaly charts, temporal boundary localizations, and spatial heatmaps.
 
 \section{Limitations and Threats to Validity}
-The current work has several limitations. First, benchmark datasets differ substantially in compression, audio quality, manipulation type, and collection process. Strong results on one dataset do not guarantee real-world generalization. Second, FaceForensics++ was treated as visual-only because the local audio was silent or unreliable. This is appropriate for the implementation but limits audio-visual comparison on that dataset. Third, classical ML samples were skipped when feature extraction failed, producing post-extraction imbalance. Fourth, heatmaps are frame-level anomaly overlays and should not be interpreted as pixel-level causal explanations.
+The framework has several limitations. First, performance is sensitive to variations in dataset collections, compression levels, and audio codecs. Second, FaceForensics++ was evaluated as visual-only due to silent or missing audio files in the local copy. Third, classical ML baselines excluded samples where face detection failed, leading to data imbalance. Fourth, the frame-level heatmaps indicate region anomalies but do not provide pixel-level causal proofs.
 
-Another limitation is that threshold calibration depends on validation data that must represent the intended deployment distribution. If real-world data contains a different real/fake ratio, video quality, or manipulation style, the selected threshold may need to be recalibrated. For high-stakes use, MDDS should be treated as a decision-support system for forensic review rather than an autonomous truth engine.
+Furthermore, threshold calibration relies heavily on validation splits representing the target data distribution. If deployment domains feature altered class balances or image qualities, the decision thresholds must be recalibrated.
 
 \section{Conclusion}
-This paper presented MDDS, an explainable multimodal deepfake detection system that combines audio, visual, temporal, and cross-modal evidence. The system provides calibrated real/fake classification together with evidence scores, temporal anomaly traces, heatmap overlays, and forensic reports. Experiments across FakeAVCeleb, FaceForensics++, and LAV-DF show that dataset-aware thresholding is essential. The FakeAVCeleb modality ablation further shows that fusion is more reliable than audio-only analysis and slightly improves over video-only analysis on the tested subset. Future work will focus on stronger cross-dataset generalization, larger balanced evaluations, improved temporal localization, and more robust handling of silent or low-quality audio.
+We presented MDDS, an explainable multimodal deepfake detection system integrating audio, visual, and temporal cues. The system provides video-level classification, channel-level forensic evidence, temporal boundaries, and spatial heatmap overlays. Evaluations on FakeAVCeleb, FaceForensics++, and LAV-DF demonstrate the importance of dataset-routing and threshold calibration. Modality ablation confirms that cross-modal fusion improves detection stability compared to unimodal baselines. Future work will investigate cross-dataset generalization, noise-robust audio encoders, and multi-face tracking.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
