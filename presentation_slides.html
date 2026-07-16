@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MDDS - Progress Presentation Slide Deck</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Syne:wght@700;800&family=Plus+Jakarta+Sans:wght@400;600&display=swap');
+
+    :root {
+      --bg: #090e1a;
+      --card-bg: #0f172a;
+      --border: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      
+      /* Neon Accents */
+      --teal: #00f2fe;
+      --teal-glow: rgba(0, 242, 254, 0.4);
+      --magenta: #fe0879;
+      --magenta-glow: rgba(254, 8, 121, 0.4);
+      --lime: #39ff14;
+      --lime-glow: rgba(57, 255, 20, 0.4);
+      --yellow: #f8e71c;
+      --yellow-glow: rgba(248, 231, 28, 0.4);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Presentation Container */
+    #deck {
+      position: relative;
+      width: 90vw;
+      height: 85vh;
+      max-width: 1440px;
+      max-height: 900px;
+      background: var(--card-bg);
+      border: 4px solid var(--border);
+      box-shadow: 12px 12px 0px var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Slides Container */
+    .slides-wrapper {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Slide Base Styling */
+    .slide {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      padding: 3.5rem 5rem;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.98) translateY(10px);
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .slide.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1) translateY(0);
+    }
+
+    /* Slide Header */
+    .slide-header {
+      margin-bottom: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px dashed var(--border);
+      padding-bottom: 1rem;
+    }
+
+    .slide-num {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--teal);
+      text-shadow: 0 0 10px var(--teal-glow);
+    }
+
+    .slide-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: -0.5px;
+    }
+
+    .slide-category {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 0.4rem 1rem;
+      border: 2px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Slide Content Layouts */
+    .slide-content {
+      flex: 1;
+      display: flex;
+      gap: 3rem;
+      align-items: stretch;
+      min-height: 0; /* allows flex children to scroll or shrink */
+    }
+
+    .slide-left, .slide-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 0;
+    }
+
+    /* Title Slide (Slide 1) */
+    .title-slide {
+      justify-content: center;
+      align-items: flex-start;
+      height: 100%;
+      padding-left: 8%;
+      background: radial-gradient(circle at 85% 20%, var(--teal-glow) 0%, transparent 60%);
+    }
+
+    .title-banner {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--teal);
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      margin-bottom: 1.5rem;
+    }
+
+    .title-main {
+      font-family: 'Syne', sans-serif;
+      font-size: 4rem;
+      font-weight: 800;
+      line-height: 1.05;
+      text-transform: uppercase;
+      margin-bottom: 2rem;
+      max-width: 85%;
+      letter-spacing: -1.5px;
+    }
+
+    .title-main span {
+      background: linear-gradient(90deg, var(--teal), var(--magenta));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .title-authors {
+      font-family: 'Space Grotesk', sans-serif;
+      display: flex;
+      gap: 3.5rem;
+      margin-top: 1.5rem;
+      border-top: 3px solid var(--border);
+      padding-top: 1.5rem;
+      width: 100%;
+      max-width: 80%;
+    }
+
+    .author-card h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.2rem;
+    }
+
+    .author-card p {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    /* Typography / Lists */
+    .content-box {
+      background: var(--bg);
+      border: 3px solid var(--border);
+      box-shadow: 6px 6px 0px var(--border);
+      padding: 1.8rem 2.2rem;
+      margin-bottom: 1.2rem;
+    }
+
+    .content-box.teal-glow { border-color: var(--teal); box-shadow: 6px 6px 0px var(--teal-glow); }
+    .content-box.magenta-glow { border-color: var(--magenta); box-shadow: 6px 6px 0px var(--magenta-glow); }
+    .content-box.lime-glow { border-color: var(--lime); box-shadow: 6px 6px 0px var(--lime-glow); }
+
+    .box-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      margin-bottom: 0.8rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .box-title.teal { color: var(--teal); }
+    .box-title.magenta { color: var(--magenta); }
+    .box-title.lime { color: var(--lime); }
+    .box-title.yellow { color: var(--yellow); }
+
+    ul.slide-list {
+      list-style-type: none;
+    }
+
+    ul.slide-list li {
+      position: relative;
+      padding-left: 1.5rem;
+      margin-bottom: 0.8rem;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: #cbd5e1;
+    }
+
+    ul.slide-list li strong {
+      color: var(--text);
+    }
+
+    ul.slide-list li::before {
+      content: "▪";
+      position: absolute;
+      left: 0;
+      color: var(--teal);
+      font-size: 1.2rem;
+      line-height: 1;
+      top: 0;
+    }
+
+    ul.slide-list.magenta li::before { color: var(--magenta); }
+    ul.slide-list.lime li::before { color: var(--lime); }
+
+    /* Tables */
+    table.slide-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    table.slide-table th {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      padding: 0.6rem 0.8rem;
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      text-transform: uppercase;
+      text-align: left;
+      color: var(--teal);
+    }
+
+    table.slide-table td {
+      border: 2px solid var(--border);
+      padding: 0.6rem 0.8rem;
+      color: #e2e8f0;
+      line-height: 1.4;
+    }
+
+    table.slide-table tr:nth-child(even) td {
+      background: rgba(30, 41, 59, 0.3);
+    }
+
+    /* Controls Footer */
+    .controls-footer {
+      height: 70px;
+      border-top: 4px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 3rem;
+      background: rgba(15, 23, 42, 0.8);
+      z-index: 10;
+    }
+
+    .footer-logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 1.2rem;
+      text-transform: uppercase;
+      letter-spacing: -0.5px;
+    }
+
+    .footer-logo span {
+      color: var(--teal);
+    }
+
+    .navigation-buttons {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .nav-btn {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      color: var(--text);
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 0.85rem;
+      padding: 0.5rem 1.2rem;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn:hover {
+      border-color: var(--teal);
+      color: var(--teal);
+      box-shadow: 0 0 10px var(--teal-glow);
+    }
+
+    .nav-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      border-color: var(--border) !important;
+      color: var(--text) !important;
+      box-shadow: none !important;
+    }
+
+    .progress-bar-container {
+      width: 250px;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 0 2rem;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--teal);
+      box-shadow: 0 0 8px var(--teal);
+      transition: width 0.3s ease;
+    }
+
+    /* Key Help */
+    .keyboard-hint {
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="deck">
+    <div class="slides-wrapper">
+      
+      <!-- Slide 1: Title -->
+      <div class="slide title-slide active" data-category="INTRO">
+        <div class="title-banner">Internship Progress Presentation - 2026</div>
+        <h1 class="title-main">Robust Explainable Multimodal Deepfake Detection <br>through <span>Forensic Evidence Aggregation</span></h1>
+        
+        <div class="title-authors">
+          <div class="author-card">
+            <h4>Shravya Umesh</h4>
+            <p>Registration No: NNM24AD057</p>
+          </div>
+          <div class="author-card">
+            <h4>Vineeth V Prabhu</h4>
+            <p>Registration No: NNM24AD071</p>
+          </div>
+          <div class="author-card">
+            <h4>Research Advisor</h4>
+            <p>Deep Learning & Video Forensics Lab</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 2: Problem Description -->
+      <div class="slide" data-category="01 / PROBLEM">
+        <div class="slide-header">
+          <span class="slide-num">01</span>
+          <span class="slide-title">Problem Description</span>
+          <span class="slide-category">Background</span>
+        </div>
+        <div class="slide-content">
+          <div class="slide-left">
+            <div class="content-box teal-glow">
+              <div class="box-title teal">Background Context</div>
+              <ul class="slide-list">
+                <li>Generative AI models are capable of crafting highly convincing, fabricated audio-visual content (Deepfakes).</li>
+                <li>Traditional classifiers suffer under complex **cross-modal** manipulations, especially visual-only or audio-only hacks.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="slide-right">
+            <div class="content-box magenta-glow">
+              <div class="box-title magenta">Core Problem Statement</div>
+              <ul class="slide-list magenta">
+                <li><strong>No Explainability:</strong> Existing production classifiers output a binary label (Real/Fake) without justifying the decision metrics.</li>
+                <li><strong>Unseen Domain Failure:</strong> Out-of-distribution compression and generative updates cause standard networks to fail completely.</li>
+                <li><strong>Lack of Localization:</strong> Models fail to specify **when** (temporal sequence blocks) and **where** (spatial face swap boundary) the edits were injected.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 3: Objectives -->
+      <div class="slide" data-category="02 / OBJECTIVES">
+        <div class="slide-header">
+          <span class="slide-num">02</span>
+          <span class="slide-title">System Objectives</span>
+          <span class="slide-category">Architectural Goals</span>
+        </div>
+        <div class="slide-content">
+          <div class="slide-left">
+            <div class="content-box teal-glow">
+              <div class="box-title teal">1. Robust Joint Fusion Classifier</div>
+              <ul class="slide-list">
+                <li>Develop a transformer-based joint representation linking facial visual cues with vocal acoustic features.</li>
+                <li>Enforce robustness using frozen visual/audio self-supervised weights (ViT + Wav2Vec2) to prevent overfit.</li>
+              </ul>
+            </div>
+            <div class="content-box lime-glow">
+              <div class="box-title lime">2. Multi-Channel Disentanglement</div>
+              <ul class="slide-list lime">
+                <li>Disentangle anomalies into **4 independent channels**: Lip-sync mismatch, Identity swap, Temporal jumps, and AV-sync misalignment.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="slide-right">
+            <div class="content-box magenta-glow">
+              <div class="box-title magenta">3. Explainable Forensic Localization</div>
+              <ul class="slide-list magenta">
+                <li>Apply a dilated 1D Temporal CNN + Linear-Chain Conditional Random Field (CRF) layer to predict frame-level forgery tags.</li>
+                <li>Construct a real-time web deployment providing visual heatmaps and dynamic temporal charts to verify findings.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 4: Proposed Architecture -->
+      <div class="slide" data-category="03 / ARCHITECTURE">
+        <div class="slide-header">
+          <span class="slide-num">03</span>
+          <span class="slide-title">Proposed Architecture</span>
+          <span class="slide-category">Technical System</span>
+        </div>
+        <div class="slide-content">
+          <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+            <table class="slide-table">
+              <thead>
+                <tr>
+                  <th>Pipeline Step</th>
+                  <th>Core Module</th>
+                  <th>Functional Operations / Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>1. Preprocessing</strong></td>
+                  <td>RetinaFace & FFmpeg</td>
+                  <td>Extract raw 16kHz audio. Process visual track at target 25 FPS, isolating face crops (224x224) and mouth ROIs (96x96).</td>
+                </tr>
+                <tr>
+                  <td><strong>2. Feature Encoders</strong></td>
+                  <td>ViT-Base & Wav2Vec2-Base</td>
+                  <td>Extract spatial visual embeddings (768-dim) and vocal acoustic embeddings (768-dim) from raw preprocessed inputs.</td>
+                </tr>
+                <tr>
+                  <td><strong>3. Cross-Modal Fusion</strong></td>
+                  <td>Transformer Cross-Attention</td>
+                  <td>2-layer multi-head (8 heads) cross-attention block. Dim: 512. Merges visual frame features with matching audio windows.</td>
+                </tr>
+                <tr>
+                  <td><strong>4. Forensic Analyzers</strong></td>
+                  <td>Evidence MLP Heads</td>
+                  <td>Four specialist branches outputs individual anomaly scores [0, 1] (Lip Sync, Visual Identity, Temporal, and Audio-Video Sync).</td>
+                </tr>
+                <tr>
+                  <td><strong>5. Boundary Tagger</strong></td>
+                  <td>1D dilated CNN + Linear CRF</td>
+                  <td>Processes sequence anomalies across time steps, outputting CRF tags: REAL (0), FAKE (1), or BOUNDARY (2).</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 5: System Hyperparameters -->
+      <div class="slide" data-category="04 / PARAMETERS">
+        <div class="slide-header">
+          <span class="slide-num">04</span>
+          <span class="slide-title">Model Hyperparameters</span>
+          <span class="slide-category">Configuration Details</span>
+        </div>
+        <div class="slide-content">
+          <div class="slide-left">
+            <div class="content-box teal-glow">
+              <div class="box-title teal">Network Dimensionality</div>
+              <ul class="slide-list">
+                <li><strong>Wav2Vec2 Dim:</strong> 768 (Pretrained `facebook/wav2vec2-base-960h`)</li>
+                <li><strong>ViT Embed Dim:</strong> 768 (Pretrained `google/vit-base-patch16-224`)</li>
+                <li><strong>Cross-Modal Dim:</strong> 512 (8 Attention Heads, 2 Cross layers)</li>
+                <li><strong>CRF Boundary CNN:</strong> 3 layers, dilations=[1, 2, 4], 128 channels.</li>
+              </ul>
+            </div>
+            <div class="content-box lime-glow">
+              <div class="box-title lime">Optimization Settings</div>
+              <ul class="slide-list lime">
+                <li><strong>Optimizer:</strong> AdamW (Learning Rate: `1e-4`, Weight Decay: `1e-4`)</li>
+                <li><strong>Batch Size / Accumulation:</strong> 8 / 4 gradient steps</li>
+                <li><strong>Scheduler:</strong> Cosine Annealing (Max epochs: 5)</li>
+              </ul>
+            </div>
+          </div>
+          <div class="slide-right">
+            <div class="content-box magenta-glow">
+              <div class="box-title magenta">Multi-Task Loss Weights</div>
+              <table class="slide-table" style="font-size: 0.78rem;">
+                <thead>
+                  <tr>
+                    <th>Loss Component</th>
+                    <th>Hyperparameter Symbol</th>
+                    <th>Assigned Weight</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Global Classification</td>
+                    <td>&lambda;<sub>cls</sub></td>
+                    <td><strong>1.0</strong></td>
+                  </tr>
+                  <tr>
+                    <td>Boundary CRF tagging</td>
+                    <td>&lambda;<sub>boundary</sub></td>
+                    <td><strong>1.0</strong></td>
+                  </tr>
+                  <tr>
+                    <td>Modal Specialists (Lip, Id, Temp, Sync)</td>
+                    <td>&lambda;<sub>specialists</sub></td>
+                    <td><strong>0.5 each</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 6: Literature Findings -->
+      <div class="slide" data-category="05 / LIT SURVEY">
+        <div class="slide-header">
+          <span class="slide-num">05</span>
+          <span class="slide-title">Findings from Literature</span>
+          <span class="slide-category">State of the Art Comparison</span>
+        </div>
+        <div class="slide-content">
+          <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+            <table class="slide-table" style="font-size: 0.78rem;">
+              <thead>
+                <tr>
+                  <th>Methodology / Category</th>
+                  <th>Core Cues Used</th>
+                  <th>Key Model Architectures</th>
+                  <th>Critical Limitations</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Traditional Audio Forensics</strong></td>
+                  <td>Handcrafted speech metrics (MFCC, HNR, Jitter)</td>
+                  <td>SVM, Random Forests, XGBoost</td>
+                  <td>Struggles completely with clean synthetic audio. Unimodal.</td>
+                </tr>
+                <tr>
+                  <td><strong>Visual Splicing Detection</strong></td>
+                  <td>Spatial anomalies, blending artifacts</td>
+                  <td>CNN, ResNet, Vision Transformers (ViT)</td>
+                  <td>Fails to capture speech misalignment or lip-sync swap.</td>
+                </tr>
+                <tr>
+                  <td><strong>Lipped Voice Alignment</strong></td>
+                  <td>Mouth shapes matched to phoneme representations</td>
+                  <td>AV-HuBERT, Lip-sync cross-attention</td>
+                  <td>Heavy computation requirements; misses pure face swaps.</td>
+                </tr>
+                <tr>
+                  <td><strong>Proposed MDDS</strong></td>
+                  <td><strong>Joint Fusion + 4 Specialists + Boundary CRF</strong></td>
+                  <td><strong>Wav2Vec2 + ViT + CRF + Calibration</strong></td>
+                  <td>Generalization bound under extreme domain shift.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 7: Observations & Contribution -->
+      <div class="slide" data-category="06 / CONTRIBUTION">
+        <div class="slide-header">
+          <span class="slide-num">06</span>
+          <span class="slide-title">Observations & Contribution</span>
+          <span class="slide-category">Innovation</span>
+        </div>
+        <div class="slide-content">
+          <div class="slide-left">
+            <div class="content-box teal-glow">
+              <div class="box-title teal">Our Major Contribution</div>
+              <ul class="slide-list">
+                <li><strong>Unified Calibration:</strong> Calibrates overall confidence scores against decision boundaries to avoid misleadingly high-confidence predictions on edge cases.</li>
+                <li><strong>Explainable UI Heatmaps:</strong> Generates frame overlays that adjust text scale dynamically depending on output resolution.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="slide-right">
+            <div class="content-box magenta-glow">
+              <div class="box-title magenta">Specialist Override Logic</div>
+              <ul class="slide-list magenta">
+                <li>We resolved deepfake false negatives (where overall fusion probabilities are low on unseen domains) by implementing a **Specialist Override Fallback**.</li>
+                <li>If the classification is initially `REAL` but any individual specialist (like Visual Identity or Audio-Video Sync) outputs a confidence score exceeding **`0.60`**, the verdict is overridden to **`FAKE`**, boosting the final probability and highlighting the face region.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 8: Expected Outcome & Progress -->
+      <div class="slide" data-category="07 / PROGRESS">
+        <div class="slide-header">
+          <span class="slide-num">07</span>
+          <span class="slide-title">System Metrics</span>
+          <span class="slide-category">Evaluation Results</span>
+        </div>
+        <div class="slide-content">
+          <div class="slide-left">
+            <div class="content-box teal-glow">
+              <div class="box-title teal">Dataset Performance Summary</div>
+              <table class="slide-table" style="font-size: 0.76rem;">
+                <thead>
+                  <tr>
+                    <th>Evaluation Dataset</th>
+                    <th>AUC Score</th>
+                    <th>F1-Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>FakeAVCeleb</strong></td>
+                    <td>0.9130</td>
+                    <td>0.8920</td>
+                  </tr>
+                  <tr>
+                    <td><strong>FaceForensics++</strong></td>
+                    <td>0.7530</td>
+                    <td>0.7410</td>
+                  </tr>
+                  <tr>
+                    <td><strong>LAV-DF</strong></td>
+                    <td>0.8060</td>
+                    <td>0.7940</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Combined (Joint)</strong></td>
+                    <td>0.8610</td>
+                    <td>0.8490</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="slide-right">
+            <div class="content-box lime-glow">
+              <div class="box-title lime">Deliverables Completed</div>
+              <ul class="slide-list lime">
+                <li>✅ Fully trained cross-modal fusion model layers and calibrated threshold weights.</li>
+                <li>✅ dilCNN + CRF boundary detection localization module.</li>
+                <li>✅ Web deployment serving responsive, real-time diagnostic reports with auto-transcoded browser video streaming.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 9: Thank You -->
+      <div class="slide title-slide" data-category="OUTRO">
+        <div class="title-banner">Robust Explainable Multimodal Deepfake Detection</div>
+        <h1 class="title-main" style="font-size: 5rem;">Thank You</h1>
+        <p style="font-family: 'Space Grotesk', sans-serif; font-size: 1.2rem; color: var(--teal); margin-bottom: 2rem;">Questions & Discussion</p>
+        
+        <div style="font-size: 0.9rem; color: var(--muted); border-left: 3px solid var(--border); padding-left: 1.5rem;">
+          vineeth.prabhu@mdds-forensics.edu | shravya.umesh@mdds-forensics.edu
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Slide Deck Footer Controls -->
+    <div class="controls-footer">
+      <div class="footer-logo">
+        MDDS <span>Forensics</span>
+      </div>
+      
+      <div class="navigation-buttons">
+        <button class="nav-btn" id="prevBtn" onclick="navigateSlide(-1)" disabled>Prev</button>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+        <button class="nav-btn" id="nextBtn" onclick="navigateSlide(1)">Next</button>
+      </div>
+
+      <div class="keyboard-hint">
+        Use Left/Right arrows to navigate
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentSlide = 0;
+    const slides = document.querySelectorAll('.slide');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const progressBar = document.getElementById('progressBar');
+
+    function updateSlideDisplay() {
+      slides.forEach((slide, idx) => {
+        if (idx === currentSlide) {
+          slide.classList.add('active');
+        } else {
+          slide.classList.remove('active');
+        }
+      });
+
+      // Update buttons
+      prevBtn.disabled = currentSlide === 0;
+      nextBtn.disabled = currentSlide === slides.length - 1;
+
+      // Update progress bar
+      const progressPercent = (currentSlide / (slides.length - 1)) * 100;
+      progressBar.style.width = `${progressPercent}%`;
+    }
+
+    function navigateSlide(direction) {
+      const nextSlide = currentSlide + direction;
+      if (nextSlide >= 0 && nextSlide < slides.length) {
+        currentSlide = nextSlide;
+        updateSlideDisplay();
+      }
+    }
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') {
+        navigateSlide(1);
+      } else if (e.key === 'ArrowLeft') {
+        navigateSlide(-1);
+      }
+    });
+
+    // Initialize progress bar
+    updateSlideDisplay();
+  </script>
+</body>
+</html>
