@@ -63,6 +63,48 @@ where $\tau$ is the dataset-specific threshold selected on validation data. Alon
 \subsection{System Architecture}
 Fig. \ref{fig:mdds_architecture} shows the proposed MDDS pipeline. The audio branch transforms waveform segments into speech embeddings. The visual branch processes face and mouth crops to capture identity, appearance, and articulation cues. Cross-modal attention then aligns audio and visual representations to model whether speech content and visible mouth motion are compatible. Separate forensic heads estimate lip-sync mismatch, identity inconsistency, temporal discontinuity, and audio-video synchronization anomalies. These evidence values are aggregated into a final prediction. Frame-level temporal boundaries are detected using 1D dilated CNNs with CRF for precise forgery onset/offset localization.
 
+\subsection{Mathematical Formulations}
+To provide rigorous explainability, the cross-modal interaction and evidence aggregation are modeled mathematically as follows:
+
+\subsubsection{Cross-Modal Attention Fusion}
+Given visual feature sequence $H_v \in \mathbb{R}^{T \times d_v}$ and audio feature sequence $H_a \in \mathbb{R}^{T \times d_a}$, we project them into a shared space of dimension $d_k$:
+\begin{equation}
+Q = H_v W_Q, \quad K = H_a W_K, \quad V = H_a W_V
+\end{equation}
+where $W_Q, W_K, W_V$ are trainable projection matrices. The cross-attention alignment is computed as:
+\begin{equation}
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V
+\end{equation}
+Multi-head attention extends this by running $h$ parallel projections to capture independent alignment cues (e.g., lip shape and voice tone).
+
+\subsubsection{Forensic Specialist Heads}
+The four forensic specialist heads evaluate structural features separately:
+\begin{itemize}
+\item \textbf{Lip-Sync Head:} Evaluates mouth region representation against audio window features:
+\begin{equation}
+e_{lip} = \sigma\left(\text{MLP}_{lip}(H_{mouth} \odot H_{audio})\right)
+\end{equation}
+\item \textbf{Identity Head:} Measures anomalies in global facial visual features:
+\begin{equation}
+e_{id} = \sigma\left(\text{MLP}_{id}(H_{face})\right)
+\end{equation}
+\item \textbf{Temporal Head:} Checks frame-to-frame transitional continuity:
+\begin{equation}
+e_{temp} = \sigma\left(\text{MLP}_{temp}(H_v - H_{v-1})\right)
+\end{equation}
+\item \textbf{AV-Sync Head:} Flags misalignment between audio and visual timelines:
+\begin{equation}
+e_{av} = \sigma\left(\text{MLP}_{av}(H_v \cdot H_a^T)\right)
+\end{equation}
+\end{itemize}
+
+\subsubsection{Temporal Forgery Boundary Detector (TFBD)}
+For temporal boundary tag prediction $y = \{y_1, y_2, \ldots, y_T\}$ where $y_t \in \{\text{REAL}, \text{FAKE}, \text{BOUNDARY}\}$, we employ a 1D dilated CNN to compute emission scores, followed by a linear-chain CRF:
+\begin{equation}
+E(y, x) = \sum_{t=1}^T \psi_u(y_t, x) + \sum_{t=1}^{T-1} \psi_p(y_t, y_{t+1}, x)
+\end{equation}
+where $\psi_u$ represents unary emission potentials from the dilated CNN and $\psi_p$ represents transitional potentials modeling tag-to-tag sequences.
+
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{architecture_diagram.png}
