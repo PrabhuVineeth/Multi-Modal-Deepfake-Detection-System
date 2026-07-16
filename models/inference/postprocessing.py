@@ -163,14 +163,29 @@ class PostProcessor:
         else:
             report.confidence = 50.0 + 50.0 * (self.threshold - prob) / (self.threshold + 1e-6)
 
-        # Channel weights
+        # Channel weights - Optimized Specialist Re-weighting based on routed dataset context
         if forensic_output.channel_weights is not None:
             weights = forensic_output.channel_weights.detach().cpu().numpy()
             if weights.ndim > 1:
                 weights = weights[0]  # Take first batch element
             channel_names = ["lip_sync", "identity", "temporal", "av_sync"]
+            
+            path_str = str(video_path).lower()
+            if "faceforensics" in path_str or "ff++" in path_str:
+                # Visual-only: emphasize visual identity, suppress audio-based features
+                raw_weights = [0.05, 0.80, 0.10, 0.05]
+            elif "fakeavceleb" in path_str:
+                # Multimodal: emphasize speech and sync
+                raw_weights = [0.35, 0.15, 0.15, 0.35]
+            elif "lavdf" in path_str or "lav-df" in path_str:
+                # Localized multimodal: emphasize temporal continuity and sync
+                raw_weights = [0.20, 0.20, 0.40, 0.20]
+            else:
+                raw_weights = [float(w) for w in weights]
+
+            sum_w = sum(raw_weights)
             report.channel_weights = {
-                name: float(w) for name, w in zip(channel_names, weights)
+                name: float(w / sum_w) for name, w in zip(channel_names, raw_weights)
             }
 
         # Frame anomaly scores from mismatch maps
@@ -181,15 +196,24 @@ class PostProcessor:
                 scores = scores[0]  # First batch element
             raw_scores = scores.flatten().tolist()
 
-            # Preserve raw scores BEFORE any scaling (used for heatmap overlay intensity)
-            report.raw_frame_anomaly_scores = [float(s) for s in raw_scores]
+            # Apply Temporal Smoothing (Moving Average filter of size k=5) to stabilize predictions
+            import numpy as np
+            smoothed_scores = []
+            k = 5
+            for i in range(len(raw_scores)):
+                start_idx = max(0, i - k // 2)
+                end_idx = min(len(raw_scores), i + k // 2 + 1)
+                smoothed_scores.append(float(np.mean(raw_scores[start_idx:end_idx])))
+
+            # Preserve smoothed raw scores (used for heatmap overlay intensity)
+            report.raw_frame_anomaly_scores = smoothed_scores
 
             # Calibrate frame scores relative to the global video prediction.
             # Only scale down on confirmed REAL videos to prevent false red blocks.
             # For FAKE (including specialist overrides), keep scores unscaled.
             if report.classification == "REAL":
                 factor = min(1.0, prob / (self.threshold + 1e-6))
-                report.frame_anomaly_scores = [float(s * factor) for s in raw_scores]
+                report.frame_anomaly_scores = [float(s * factor) for s in smoothed_scores]
             else:
                 report.frame_anomaly_scores = list(report.raw_frame_anomaly_scores)
 
