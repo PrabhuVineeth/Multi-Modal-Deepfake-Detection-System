@@ -245,7 +245,7 @@ export default function App() {
                     <td>Audio + Video</td>
                     <td>21,566</td>
                     <td><span style={{ color: 'var(--lime)' }}>0.913</span></td>
-                    <td>94.1%</td>
+                    <td>82.0%</td>
                     <td>0.845</td>
                     <td>T=0.96</td>
                   </tr>
@@ -263,18 +263,18 @@ export default function App() {
                     <td>Audio + Video</td>
                     <td>36,431</td>
                     <td><span style={{ color: 'var(--lime)' }}>0.806</span></td>
-                    <td>85.2%</td>
-                    <td>0.901</td>
-                    <td>T=0.44</td>
+                    <td>73.1%</td>
+                    <td>0.751</td>
+                    <td>T=0.40</td>
                   </tr>
                   <tr style={{ background: 'var(--surface2)' }}>
                     <td><span style={{ color: 'var(--lime)', fontWeight: 'bold' }}>Combined (Joint)</span></td>
                     <td>Audio + Video</td>
                     <td>28,566</td>
                     <td><span style={{ color: 'var(--lime)', fontWeight: '900' }}>0.861</span></td>
-                    <td><strong>94.1%</strong></td>
-                    <td><strong>0.845</strong></td>
-                    <td>T=0.96</td>
+                    <td><strong>78.5%</strong></td>
+                    <td><strong>0.849</strong></td>
+                    <td>T=0.50</td>
                   </tr>
                 </tbody>
               </table>
