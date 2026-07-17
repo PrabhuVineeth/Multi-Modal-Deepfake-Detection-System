@@ -144,17 +144,17 @@ class PostProcessor:
         report.av_sync_score = self._to_float(forensic_output.av_sync_score)
 
         # Fallback override: if any individual specialist detects manipulation
-        # Threshold lowered to 0.60 to catch real-world face-swaps (e.g. YouTube deepfakes)
-        # that score moderately on identity/av_sync but not strongly on the fused output
+        # Threshold raised to 0.80 to avoid false positives on original videos
+        # while still catching clear high-fidelity face-swaps
         max_specialist = max(report.lip_sync_score, report.identity_score, report.av_sync_score)
-        if report.classification == "REAL" and max_specialist > 0.60:
+        if report.classification == "REAL" and max_specialist > 0.80:
             logger.warning(
                 f"Specialist override triggered: identity={report.identity_score:.3f}, "
                 f"lip_sync={report.lip_sync_score:.3f}, av_sync={report.av_sync_score:.3f}"
             )
             report.classification = "FAKE"
             # Scale boost proportionally — higher specialist score = higher boosted probability
-            prob = max(prob, self.threshold + (1.0 - self.threshold) * (max_specialist - 0.60) / 0.40)
+            prob = max(prob, self.threshold + (1.0 - self.threshold) * (max_specialist - 0.80) / 0.20)
             report.raw_probability = prob
 
         # Calibrate confidence relative to the decision threshold
