@@ -50,8 +50,8 @@ class ModelConfig:
     temperature_init: float = 1.5
 
     # Freezing strategy
-    freeze_audio_layers: int = 8        # Freeze first N transformer layers of Wav2Vec2
-    freeze_visual_layers: int = 8       # Freeze first N transformer layers of ViT
+    freeze_audio_layers: int = 4        # Freeze first N transformer layers of Wav2Vec2
+    freeze_visual_layers: int = 4       # Freeze first N transformer layers of ViT
 
 
 @dataclass
@@ -118,7 +118,7 @@ class TrainingConfig:
     min_delta: float = 1e-4
 
     # Data
-    num_workers: int = 2               # Optimal for Windows (spawn multiprocessing)
+    num_workers: int = 0               # Set to 0 to prevent Windows process deadlocks
     pin_memory: bool = True
     train_split: float = 0.8
     val_split: float = 0.1

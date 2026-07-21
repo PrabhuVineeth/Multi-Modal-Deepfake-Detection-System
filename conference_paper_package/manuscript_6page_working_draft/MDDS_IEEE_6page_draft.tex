@@ -22,7 +22,7 @@ Email: \{nnm24ad057, nnm24ad071\}@nmamit.in}}
 \maketitle
 
 \begin{abstract}
-As facial reenactment, voice cloning, and lip-synchronization technologies mature, distinguishing manipulated media requires analyzing joint cross-modal cues rather than relying on isolated visual classifiers. We present the Multimodal Deepfake Detection System (MDDS), which evaluates speech audio, facial structures, articulation regions, and temporal audio-visual consistency. The core architecture integrates a Wav2Vec2 audio encoder and dual ViT visual streams with a cross-modal attention block to fuse representations, followed by four dedicated forensic prediction heads and an attention-weighted aggregator. Beyond binary classification, MDDS localizes manipulations by outputting channel-specific anomaly scores, spatial heatmap overlays, and frame-level temporal forgery boundaries. We evaluate MDDS on FakeAVCeleb, FaceForensics++, and LAV-DF using dataset-aware routing and threshold calibration. On a balanced FakeAVCeleb subset, classical ML baselines demonstrate that feature fusion yields an F1-score of 0.8806 and ROC-AUC of 0.9335 via XGBoost. The deep model trained on LAV-DF obtains an F1-score of 0.7506 under validation-calibrated thresholding, boosting fake detection recall to 0.8087. These results indicate that cross-modal fusion increases detection stability, while explainable indicators provide actionable forensic diagnostics.
+To counter the threat of visual and auditory deepfakes, effective forensic systems must examine multi-modal indicators instead of relying solely on single-stream classifiers. We present a framework—the Multimodal Deepfake Detection System (MDDS)—that maps anomalies across speech dynamics, spatial structures, and temporal synchronization. The system utilizes a Wav2Vec2 backbone for speech encoding and a dual-stream Vision Transformer (ViT) setup for visual rendering, aligning these channels via a cross-attention fusion layer. In addition to video-level predictions, the framework generates frame-by-frame anomaly timelines, localization boundaries, and regional attention heatmaps. Multi-dataset evaluation on FakeAVCeleb, FaceForensics++, and LAV-DF demonstrates the advantages of dynamic thresholding and dataset-specific routing. On balanced partitions of FakeAVCeleb, classical fusion models achieve an F1-score of 0.8806 and a ROC-AUC of 0.9335. On the temporally manipulated LAV-DF corpus, the calibrated deep architecture obtains an F1-score of 0.7506, showing that cross-modal checks improve classification stability.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -30,23 +30,23 @@ Deepfake detection, multimodal learning, audio-visual forensics, cross-modal att
 \end{IEEEkeywords}
 
 \section{Introduction}
-Modern synthetic media has evolved from basic facial swaps to complex audio-visual manipulations where face, voice, and speech alignment are forged concurrently. Detecting these advanced forgeries requires analyzing spatial image artifacts alongside cross-modal relationships, such as verifying whether vocal speech patterns match visible lip dynamics. 
+Manipulated media has advanced beyond simple face replacement to encompass synchronous visual and auditory alterations. Identifying these multi-layered forgeries requires analyzing frame-level visual structures alongside inter-modality metrics, ensuring that the acoustic components correspond directly with the lip movement patterns. 
 
-Standard deepfake detectors operate as binary black boxes, returning a real/fake flag with no explanation. This lack of transparency limits forensic analysis, as users cannot determine if a decision stems from lip-sync error, visual splicing, or audio manipulation. Furthermore, fixed decision thresholds (e.g., $\tau=0.50$) lead to generalization failures when models encounter unseen video formats, compression levels, or domain distributions. 
+Conventional architectures typically function as black boxes, outputting a singular fake probability score without explanations. The absence of fine-grained evidence limits usability in forensic investigations, where identifying the specific mode of manipulation—such as synthesized speech or visual splicing—is critical. In addition, static decision boundaries (such as $\tau = 0.50$) lead to performance drops when deploying models to domains with different compression artifacts or class distributions. 
 
-We address these limitations with the Multimodal Deepfake Detection System (MDDS), a framework designed to verify audio-visual consistency. The system extracts raw audio and samples frames, applies face and mouth tracking, computes self-supervised embeddings, and aligns them using cross-modal attention. Unlike binary classifiers, MDDS exposes specific indicators for lip-sync, face identity, temporal transition, and audio-video synchronization. The model produces visual anomaly timelines, resolution-adaptive heatmap overlays, and detailed reports.
+To resolve these challenges, this study presents the Multimodal Deepfake Detection System (MDDS), a diagnostic tool built on cross-modal validation. The system extracts aligned audio-visual features, traces facial and lip motion paths, and establishes correspondence using a cross-attention layer. Instead of generating a single classification score, the system exposes specialized indices for lip-sync consistency, facial identity, temporal coherence, and delay compensation. It translates these metrics into spatial localization maps and detailed reports.
 
 Our work presents the following contributions: (i) an end-to-end audio-visual pipeline utilizing Wav2Vec2 and ViT backbones with cross-modal attention; (ii) dataset-routing to apply specialized visual-only models when audio is absent or noisy; (iii) validation-based threshold calibration to match model outputs with deployment criteria; (iv) explainable diagnostic artifacts, including frame-level anomaly traces and spatial heatmaps; and (v) an empirical feature-ablation baseline comparing unimodal and multimodal performance.
 
 \section{Literature Survey}
 Recent research in deepfake detection has shifted from isolated visual artifact classification to joint, cross-modal audio-visual reasoning. Between 2023 and 2024, self-supervised representations and attention-based fusion mechanisms became standard. Kharel et al. \cite{kharel2023dftransfusion} present DF-TransFusion, utilizing lip-audio cross-attention alongside facial self-attention layers. Cozzolino et al. \cite{cozzolino2023audiovisual} target person-of-interest deepfakes, measuring biometric consistency against a verified target reference set. Zhang et al. \cite{pvass2023mdd} propose contrastive learning for joint multimodal synchronization. Zhou et al. \cite{zhou2023joint} employ contrastive objectives to group matching audio-visual embeddings while pushing fake pairs apart in joint space. Koutlis and Papadopoulos \cite{koutlis2024investigating} investigate self-supervised foundation backbones to extract robust features without task-specific tuning. To address voice-face mismatch, Wang et al. \cite{wang2024vfd} introduce VFD, a database specifically designed to evaluate identity mismatch detection, and propose a dual-encoder baseline. Finally, Zhao et al. \cite{zhao2024interpretable} design capsule networks with dynamic routing to produce interpretable spatial anomaly predictions.
 
-Developments in 2025 and 2026 introduced advanced synchronization, distillation, and scalable pipelines. Javed et al. \cite{javed2025deepcheck} propose Deepcheck to assess cross-modal consistency. Kumar et al. \cite{kumar2025robust} implement delay compensation to reduce false positives caused by natural transmission lags. Yadav \cite{yadav2026multimodal} overviews deep learning-based multimodal integration taxonomy. Bhattacharya \cite{bhattacharya2026multimodal} details a scalable AI pipeline. Sun \cite{sun2026audiovisual} introduces a multi-teacher knowledge distillation framework to guide detection models. Anitha \cite{anitha2026robust} presents AV-CATNet for real-time edge deployment. Hou \cite{hou2026deepfake} proposes Iterative Consensus Learning (ICL) which evaluates data quality across multiple streams. Yermakov \cite{yermakov2026deepfake} focuses on cross-dataset generalization across benchmarks.
+Subsequent models published in 2025 and 2026 focused on distillation architectures and temporal synchronization. Javed et al. \cite{javed2025deepcheck} propose Deepcheck to assess cross-modal consistency. Kumar et al. \cite{kumar2025robust} implement delay compensation to reduce false positives caused by natural transmission lags. Yadav \cite{yadav2026multimodal} overviews deep learning-based multimodal integration taxonomy. Bhattacharya \cite{bhattacharya2026multimodal} details a scalable AI pipeline. Sun \cite{sun2026audiovisual} introduces a multi-teacher knowledge distillation framework to guide detection models. Anitha \cite{anitha2026robust} presents AV-CATNet for real-time edge deployment. Hou \cite{hou2026deepfake} proposes Iterative Consensus Learning (ICL) which evaluates data quality across multiple streams. Yermakov \cite{yermakov2026deepfake} focuses on cross-dataset generalization across benchmarks.
 
 Furthermore, recent 2026 studies target short utterances, large multimodal models (LMMs), and acoustic robustness. Shi et al. \cite{shi2026audio} focus on short utterances. Cao et al. \cite{cao2026leveraging} leverage Qwen-2.5-Omni Large Multimodal Models (LMMs). Xiao et al. \cite{xiao2026how} utilize neural audio codecs to label resynthesized audio. Lee et al. \cite{lee2026dynamic} present a dynamic noise-aware Multi-LoRA framework to handle noisy inputs. Kim et al. \cite{kim2026auxiliary} utilize auxiliary multi-label training to force models to explicitly recognize post-processing artifacts.
 
 \subsection{Research Gap}
-The reviewed work indicates three practical gaps. First, visual-only systems do not explicitly test whether speech and mouth movement are consistent. Second, many benchmark results report only binary classification metrics and do not expose forensic evidence that can be inspected by a user. Third, threshold selection is often treated as a fixed 0.50 decision boundary, even though score distributions differ by dataset, modality, and class balance. MDDS addresses these gaps by combining cross-modal attention, evidence-specific output heads, dataset-aware routing, and validation-selected thresholds.
+Existing literature exhibits three critical limitations: (i) spatial classifiers ignore the physical alignment between vocal tracks and lip configurations; (ii) current evaluation benchmarks focus on binary verdicts rather than granular forensic reports; and (iii) static decision thresholds fail to adapt to domain-specific score shifts. The proposed MDDS architecture addresses these points by coupling cross-modal attention layers, specialist forensic heads, and validation-tuned threshold boundaries.
 
 \section{Methodology}
 \subsection{Problem Formulation}
@@ -179,10 +179,10 @@ LAV-DF & A+V & Localized audio-visual deepfake manipulations & Yes \\
 \end{tabular}
 \end{table}
 
-Experiments are conducted on FakeAVCeleb (for general audio-visual fakes), FaceForensics++ (for high-fidelity visual manipulation), and LAV-DF (for localized temporal tampering). Performance is quantified using Accuracy, Precision, Recall, F1-Score, and ROC-AUC. High temporal resolution is preserved during inference by sampling 64 uniform frames to capture brief modifications. Direct threshold reuse across datasets is avoided to prevent domain-shift errors.
+Empirical assessments are carried out on FakeAVCeleb, FaceForensics++, and LAV-DF to validate the pipeline under visual-only, joint, and localized temporal forgeries. The metrics used are Accuracy, Precision, Recall, F1-Score, and Area Under the ROC Curve (AUC). We maintain temporal granularity by extracting 64 uniform frames per video clip. Dataset-specific threshold mapping is used to combat domain shifts.
 
 \subsection{Evaluation Measures}
-The system is evaluated using Accuracy, Precision, Recall, F1-score, and ROC-AUC. Accuracy measures overall performance on balanced test sets, while Precision and Recall track false positives and false negatives. F1-score summarizes the harmonic mean of precision and recall. ROC-AUC rates ranking capability across varying classification boundaries.
+We assess the proposed framework using Accuracy, Precision, Recall, F1-score, and ROC-AUC. The accuracy metric reflects the overall classification success, while precision and recall evaluate susceptibility to false alarms and missed manipulations. The F1-score represents the harmonic mean of these values, and the ROC-AUC measures discriminative power across threshold variations.
 
 \subsection{Training and Inference Settings}
 The LAV-DF model was fine-tuned using cached preprocessed features, small batch sizes, gradient accumulation, and cosine learning rate scheduling. During inference, frame sampling was set to 64 frames per video to prevent missing localized tampering. Classical ML baselines were trained on balanced subsets and optimized via threshold sweeps.
@@ -208,7 +208,7 @@ T & Acc. & Prec. & Rec. & F1 & TP/TN/FP/FN \\
 \end{tabular}
 \end{table}
 
-Validation sweeping indicates that tuning threshold $	au$ to $0.40$ on LAV-DF yields a peak F1-score of $0.7506$ and increases recall to $0.8087$. This minimizes the risk of missing manipulated content (false negatives drop from 1021 to 697), which is a critical target in security screenings.
+Validation Sweeps indicate that setting the threshold $\tau$ to $0.40$ on LAV-DF achieves an optimal F1-score of $0.7506$ while boosting recall to $0.8087$. This threshold selection strategy helps prevent missed detections, reducing false negatives from 1021 to 697.
 
 \subsection{Dataset-Aware Calibration}
 \begin{table}[htbp]
@@ -226,7 +226,7 @@ Combined (Joint) & 0.50 & 0.7850 & 0.8530 & 0.8450 & 0.8490 \\
 \end{tabular}
 \end{table}
 
-Table III indicates that decision boundaries must adapt to individual datasets. FakeAVCeleb requires a high threshold ($0.96$) to control false alarms, whereas LAV-DF and FaceForensics++ achieve peak performance under lower thresholds ($0.40$ and $0.52$). Applying a static 0.50 threshold across all test domains degrades performance, validating the dataset-routing design.
+Table III highlights the necessity of dynamically adjusting the decision boundaries for different datasets. FakeAVCeleb functions best under a strict threshold ($0.96$) to suppress false positives, while FaceForensics++ and LAV-DF peak under relaxed thresholds ($0.52$ and $0.40$). Using a global 0.50 boundary degrades accuracy across domains, supporting our routing strategy.
 
 \subsection{FakeAVCeleb Modality Ablation}
 \begin{table}[htbp]
@@ -244,7 +244,7 @@ Fusion & 0.54 & 0.8300 & 0.8367 & 0.8200 & 0.8283/0.8992 \\
 \end{tabular}
 \end{table}
 
-Ablation results on FakeAVCeleb indicate that audio features alone are weaker (AUC = 0.6268) than visual cues. Visual-only analysis performs strongly (AUC = 0.8992), but multimodal cross-attention fusion provides the most stable classification, reaching a peak accuracy of 0.8300.
+Evaluation of the separate modalities on FakeAVCeleb shows that acoustic features alone yield an AUC of 0.6268, which is lower than visual cues. Visual-only models perform strongly with an AUC of 0.8992, but cross-attention fusion delivers the most consistent results, achieving a validation accuracy of 0.8300.
 
 \subsection{Classical ML Fusion Baseline}
 \begin{table}[htbp]
@@ -260,19 +260,19 @@ Setting & Model & Acc. & Prec. & Rec. & F1/AUC \\
 \end{tabular}
 \end{table}
 
-XGBoost achieved the highest performance among classical baselines, yielding an F1-score of 0.8806 and a ROC-AUC of 0.9335 on the 750-sample subset. This confirms the benefit of feature-level fusion over unimodal baselines.
+The XGBoost model achieved the best results among the non-deep baselines, registering an F1-score of 0.8806 and an AUC of 0.9335 on the 750-sample set. This confirms that feature fusion outperforms single-modality predictors.
 
 \subsection{Error Analysis}
-Classification errors stem primarily from modality dropout, domain shifts, and threshold sensitivity. Silent audio tracks force the system to rely solely on the visual sub-encoders. Domain shift occurs when test samples contain compression artifacts, lighting changes, or poses unseen during training. Furthermore, probabilities near the classification threshold are highly sensitive to small parameter changes. MDDS mitigates these issues by returning raw probability scores and individual channel indicators to the user.
+Failures in classification are primarily associated with missing modalities, unseen noise distributions, and high boundary sensitivity. If a video lacks audio, the framework must fall back to visual sub-encoders. Similarly, significant domain shifts, such as changes in compression rates or head angles, can degrade prediction accuracy. Near-boundary probabilities are also sensitive to minor hyperparameter changes. The system addresses these vulnerabilities by outputting raw probability indices and individual component scores.
 
 \subsection{Practical Reliability Checks}
-Reliable deployment requires four core checks: (i) verifying that feature caches match active file configurations; (ii) logging modality availability (e.g., flagging silent audio or failed face detection); (iii) documenting the threshold and dataset profile used; and (iv) qualifying confidence scores based on domain shifts. The user interface exposes these parameters to ensure auditability during forensic review.
+Ensuring reliability in production environments depends on four procedures: (i) verifying the integrity of precomputed feature caches; (ii) tracking hardware and stream dropouts, such as missing audio channels; (iii) logging active threshold configurations; and (iv) adjusting confidence metrics based on target domain statistics. The front-end dashboard displays these variables to assist forensic auditors.
 
 \section{Deployment Demonstration}
-The demonstration system integrates a FastAPI backend with a Streamlit interface. Users upload video inputs and select dataset routing profiles. The backend processes the media and returns classification results, raw probabilities, confidence metrics, and individual specialist scores. The interface renders frame anomaly charts, temporal boundary localizations, and spatial heatmaps.
+Our demonstration prototype couples a FastAPI backend with a Streamlit-based web dashboard. Users upload test media and designate the routing profile. The server runs the pipeline and returns deepfake probabilities, frame anomaly values, and specialist forensic scores. The frontend renders dynamic plots, temporal localizations, and attention-guided spatial overlays.
 
 \section{Limitations and Threats to Validity}
-The framework has several limitations. First, performance is sensitive to variations in dataset collections, compression levels, and audio codecs. Second, FaceForensics++ was evaluated as visual-only due to silent or missing audio files in the local copy. Third, classical ML baselines excluded samples where face detection failed, leading to data imbalance. Fourth, the frame-level heatmaps indicate region anomalies but do not provide pixel-level causal proofs.
+There are several constraints on the system's performance. First, model accuracy remains sensitive to variations in video encoding formats and resolution. Second, FaceForensics++ could only be evaluated as visual-only due to missing audio in the local copy. Third, classical baselines dropped samples where RetinaFace failed, creating a slight data bias. Fourth, the frame-level attention heatmaps highlight anomalous regions but do not verify pixel-level causal mechanisms.
 
 Furthermore, threshold calibration relies heavily on validation splits representing the target data distribution. If deployment domains feature altered class balances or image qualities, the decision thresholds must be recalibrated.
 
