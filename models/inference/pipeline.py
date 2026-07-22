@@ -86,8 +86,8 @@ class ForensicInferencePipeline:
 
         DATASET_ROUTING = {
             "fakeavceleb": {
-                "checkpoint": "checkpoints/best_model_fakeavceleb.pth",
-                "threshold": 0.96,
+                "checkpoint": "checkpoints/best_model_combined.pth",
+                "threshold": 0.50,
                 "visual_only": False,
             },
             "faceforensics": {

@@ -145,7 +145,7 @@ def auto_detect_dataset(video_path: Path, filename: str) -> str:
     if "lavdf" in filename_clean or "lav-df" in filename_clean or "lav-df" in full_path_clean or "lavdf" in full_path_clean:
         return "lavdf"
     
-    # Default to fakeavceleb joint model
+    # Default to joint combined model
     return "fakeavceleb"
 
 
