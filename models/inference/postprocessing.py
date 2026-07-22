@@ -143,21 +143,7 @@ class PostProcessor:
         report.temporal_score = self._to_float(forensic_output.temporal_score)
         report.av_sync_score = self._to_float(forensic_output.av_sync_score)
 
-        # Fallback override: if individual specialists detect high-confidence manipulation
-        # Require multiple specialists or extremely high single specialist score (>0.88)
-        max_specialist = max(report.lip_sync_score, report.identity_score, report.av_sync_score)
-        specialist_count = sum(1 for s in [report.lip_sync_score, report.identity_score, report.av_sync_score] if s > 0.70)
-        
-        if report.classification == "REAL" and (max_specialist > 0.88 or specialist_count >= 2):
-            logger.warning(
-                f"Specialist override triggered: identity={report.identity_score:.3f}, "
-                f"lip_sync={report.lip_sync_score:.3f}, av_sync={report.av_sync_score:.3f}"
-            )
-            report.classification = "FAKE"
-            prob = max(prob, self.threshold + (1.0 - self.threshold) * (max_specialist - 0.70) / 0.30)
-            report.raw_probability = prob
-
-        # Calibrate confidence relative to decision threshold
+        # Calibrate confidence relative to decision threshold (50% = boundary)
         if report.classification == "FAKE":
             report.confidence = min(99.9, 50.0 + 50.0 * (prob - self.threshold) / (1.0 - self.threshold + 1e-6))
         else:
