@@ -1,0 +1,143 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+
+\begin{document}
+
+\title{Explainable Multimodal Deepfake Detection Using Audio-Visual Cross-Modal Evidence Aggregation}
+
+\author{\IEEEauthorblockN{Author 1, Author 2, Vineeth Prabhu / NNM24AD071}
+\IEEEauthorblockA{Department of Artificial Intelligence and Data Science\\
+NMAM Institute of Technology, NITTE (Deemed to be University)\\
+Mangaluru, India\\
+Email: nnm24ad071@nmamit.in}}
+
+\maketitle
+
+\begin{abstract}
+The rapid improvement of face reenactment, voice cloning, and lip-synchronization tools has made deepfake detection a multimodal forensic problem rather than a purely visual classification task. This paper presents a Multimodal Deepfake Detection System (MDDS) that jointly analyzes speech audio, face crops, mouth regions, and temporal audio-visual consistency. The proposed architecture combines a Wav2Vec2-based audio encoder, ViT-based visual encoders, cross-modal attention modules, forensic evidence heads, and attention-weighted evidence aggregation. In addition to binary real/fake classification, the system produces interpretable evidence scores, temporal anomaly traces, heatmap overlays, and JSON/HTML forensic reports. Experiments were conducted on FakeAVCeleb, FaceForensics++, and LAV-DF with dataset-aware routing and validation-selected thresholds. A feature-based classical machine learning baseline was also evaluated on FakeAVCeleb to study audio-only, video-only, and audio-video fusion behavior. The best classical baseline, Fusion XGBoost, achieved an F1-score of 0.8806 and ROC-AUC of 0.9335 on the 750/class FakeAVCeleb setting. The full LAV-DF model achieved an F1-score of 0.7506 at the validation-selected threshold, improving fake recall from 0.7198 to 0.8087 compared with the default threshold.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Deepfake detection, multimodal learning, audio-visual forensics, cross-modal attention, FakeAVCeleb, FaceForensics++, LAV-DF, explainable AI.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Synthetic media generation has progressed from visually obvious face manipulation to realistic audio-visual forgeries involving face swapping, speech synthesis, and lip synchronization. As a result, forensic detection systems must reason not only about visual artifacts, but also about the consistency between a speaker's voice, identity, mouth motion, and temporal continuity. This work presents an explainable Multimodal Deepfake Detection System (MDDS) designed around audio-visual evidence fusion. Unlike a black-box classifier, MDDS exposes channel-level forensic scores for lip-sync, identity, temporal consistency, and audio-video synchronization. It also generates frame-level anomaly traces, heatmap overlays, and structured forensic reports.
+
+The contributions are: (i) a complete audio-visual deepfake detection pipeline combining Wav2Vec2 audio representations, ViT-based visual representations, and cross-modal attention; (ii) dataset-aware routing for FakeAVCeleb, FaceForensics++, and LAV-DF; (iii) explainability outputs including per-channel evidence scores, frame anomaly timelines, heatmap videos, and HTML/JSON reports; (iv) a FakeAVCeleb modality ablation baseline; and (v) validation-based threshold calibration.
+
+\section{Literature Survey}
+FaceForensics++ introduced a benchmark for manipulated facial images and videos covering DeepFakes, Face2Face, FaceSwap, and NeuralTextures \cite{rossler2019faceforensics}. FakeAVCeleb provides an audio-video multimodal dataset containing both deepfake videos and synthesized or cloned audio \cite{khalid2021fakeavceleb}. LAV-DF emphasizes localized audio-visual forgery detection, where only a temporal segment may be manipulated \cite{cai2022lavdf}. MDDS uses Wav2Vec2-style speech representations \cite{baevski2020wav2vec}, ViT-style visual representations \cite{dosovitskiy2021vit}, RetinaFace-based face localization \cite{deng2020retinaface}, transformer attention \cite{vaswani2017attention}, and XGBoost for the classical ML baseline \cite{chen2016xgboost}.
+
+\subsection{Research Gap}
+Existing methods often focus on a single modality or produce only a binary decision. Modern forgeries require modeling audio-visual consistency, identity consistency, and temporal localization. MDDS addresses these gaps using cross-modal attention, evidence aggregation, temporal anomaly traces, and deployable forensic reports.
+
+\section{Methodology}
+\subsection{System Architecture}
+An input video is decomposed into audio and visual streams. Audio is resampled and encoded using a Wav2Vec2-style encoder. Visual frames are sampled, faces are detected using RetinaFace, and face/mouth crops are encoded using ViT-based modules. Encoded streams are fused using cross-modal attention pathways for speech-lip consistency, voice-identity consistency, and audio-video timing consistency. Four forensic analyzers estimate lip-sync, identity, temporal, and AV-sync evidence scores. Evidence aggregation combines these signals into a final prediction and confidence score.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{architecture_diagram.png}
+\caption{Proposed MDDS audio-visual evidence aggregation pipeline.}
+\label{fig:mdds_architecture}
+\end{figure}
+
+\subsection{Preprocessing and Inference}
+The preprocessing pipeline extracts audio at 16 kHz, samples video frames, detects faces, crops mouth regions, and synchronizes audio windows with frame timestamps. The final inference setting uses 64 frames per video. FaceForensics++ is routed as visual-only because the available dataset audio was silent or unreliable. FakeAVCeleb and LAV-DF use multimodal inference.
+
+\subsection{Threshold Calibration}
+A video is classified as fake when the sigmoid fake probability is greater than or equal to the selected threshold. Because datasets differ in class distribution and manipulation type, thresholds are selected on validation splits and evaluated on held-out test splits.
+
+\subsection{Classical ML Modality Ablation}
+A feature-based FakeAVCeleb baseline was used to evaluate audio-only, video-only, and fusion settings. Logistic Regression, SVM, Random Forest, and XGBoost were trained, and validation-selected thresholds were used for test evaluation.
+
+\section{Experimental Setup}
+\begin{table}[htbp]
+\caption{Dataset Summary}
+\centering
+\begin{tabular}{p{1.55cm}p{1.4cm}p{2.4cm}p{0.7cm}}
+\toprule
+Dataset & Modality & Manipulation Types & Bound. \\
+\midrule
+FakeAVCeleb & A+V & Face-swap, lip-sync, multimodal fake combinations & No \\
+FaceForensics++ & Video & DeepFakes, Face2Face, FaceSwap, NeuralTextures & No \\
+LAV-DF & A+V & Realistic audio-visual deepfakes & Yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The system is evaluated using accuracy, precision, recall, F1-score, balanced accuracy, ROC-AUC, and confusion matrix values. F1-score is used as the primary single-number metric when balancing precision and recall.
+
+\section{Results and Discussion}
+\subsection{LAV-DF Full Model}
+\begin{table}[htbp]
+\caption{LAV-DF Full Model Threshold Comparison}
+\centering
+\begin{tabular}{cccccc}
+\toprule
+T & Acc. & Prec. & Rec. & F1 & TP/TN/FP/FN \\
+\midrule
+0.50 & 0.7330 & 0.7393 & 0.7198 & 0.7294 & 2623/2719/925/1021 \\
+0.40 & 0.7313 & 0.7003 & 0.8087 & 0.7506 & 2947/2383/1261/697 \\
+0.49 & 0.7357 & 0.7378 & 0.7313 & 0.7346 & 2665/2697/947/979 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At threshold 0.50, the LAV-DF model achieved F1 = 0.7294. The validation-selected F1 threshold of 0.40 increased recall from 0.7198 to 0.8087 and improved F1 to 0.7506.
+
+\subsection{Dataset-Aware Calibration}
+\begin{table}[htbp]
+\caption{Dataset-Aware Calibration Summary}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+Dataset & T & Acc. & Prec. & Rec. & F1 \\
+\midrule
+FakeAVCeleb & 0.96 & 0.8200 & 0.7424 & 0.9800 & 0.8448 \\
+FaceForensics++ & 0.52 & 0.6750 & 0.6224 & 0.8900 & 0.7325 \\
+LAV-DF & 0.40 & 0.7313 & 0.7003 & 0.8087 & 0.7506 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Classical ML Baseline}
+\begin{table}[htbp]
+\caption{FakeAVCeleb Classical ML Fusion Baseline}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+Setting & Model & Acc. & Prec. & Rec. & F1/AUC \\
+\midrule
+500/class & Fusion XGBoost & 0.8579 & 0.8431 & 0.8866 & 0.8643/0.9384 \\
+750/class & Fusion XGBoost & 0.8632 & 0.9291 & 0.8369 & 0.8806/0.9335 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Fusion XGBoost was the strongest classical ML model in both settings. This supports the conclusion that audio-video fusion is more reliable than using either modality alone, while audio-only features were weaker and less stable.
+
+\subsection{Discussion}
+The results show that threshold selection strongly affects deployment behavior. Lower thresholds increase fake recall but can generate more false positives. Higher thresholds improve precision but may miss subtle manipulations. The deployment interface therefore exposes raw fake probability and threshold values to support interpretable decisions.
+
+\section{Deployment Demonstration}
+The project includes a FastAPI backend and Streamlit interface. Users can upload a video, select a dataset profile, and receive a verdict with confidence, raw fake probability, threshold, evidence scores, temporal anomaly plot, heatmap preview, and downloadable reports.
+
+\section{Limitations}
+Benchmark datasets differ in compression, audio availability, manipulation type, and class balance. FaceForensics++ was handled as visual-only because the available audio was silent or unreliable. Some classical ML samples were skipped because of face or audio extraction failure, causing post-extraction imbalance. Heatmaps are frame-level anomaly overlays, not pixel-level causal attribution.
+
+\section{Conclusion}
+This paper presented MDDS, an explainable multimodal deepfake detection system that combines audio, visual, temporal, and cross-modal evidence. Experiments show that dataset-aware thresholding is essential, and the FakeAVCeleb ML ablation confirms that fusion is more reliable than audio-only or video-only analysis. Future work will focus on stronger cross-dataset generalization and improved temporal localization.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

@@ -18,3 +18,5 @@ stderr.log
 output/
 output/cache/
 output/test_manifest_cache_v2/
+output/extracted_embeddings/
+*.zip
