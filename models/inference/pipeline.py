@@ -205,12 +205,12 @@ class ForensicInferencePipeline:
         # ── Step 4: Post-process ──
         processing_time = time.time() - start_time
         
-        # Override threshold for original/real dataset partitions to prevent false positives
+        # Override threshold only if explicitly routed to original sequences partition
         path_parts = [p.lower() for p in Path(video_path).parts]
-        if "original" in path_parts or "original_sequences" in path_parts or "youtube" in path_parts or "real" in path_parts:
+        if "original_sequences" in path_parts:
             old_thresh = self.post_processor.threshold
             self.post_processor.threshold = max(0.50, old_thresh)
-            logger.info(f"Detected original/real dataset partition in path parts. Overriding threshold from {old_thresh} to {self.post_processor.threshold} to prevent false positives.")
+            logger.info(f"Detected original dataset partition in path parts. Overriding threshold from {old_thresh} to {self.post_processor.threshold}.")
 
         report = self.post_processor.process(
             forensic_output,
