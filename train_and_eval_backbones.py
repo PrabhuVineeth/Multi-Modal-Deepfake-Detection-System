@@ -61,8 +61,8 @@ def load_real_video_dataset():
 
 
 def extract_features_for_backbone(video_items, backbone_identifier, device, max_samples=123):
-    """Extract real features for a given backbone from real video files."""
-    prep_cfg = PreprocessConfig(max_frames=32)
+    """Extract real features for a given backbone from real video files using MTCNN face detector."""
+    prep_cfg = PreprocessConfig(max_frames=32, face_detection_backend="mtcnn")
     preprocessor = PreprocessingPipeline(config=prep_cfg)
 
     audio_enc = AudioEncoder(model_name=model_config.wav2vec2_model_name, projection_dim=512).to(device).eval()
