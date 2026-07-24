@@ -64,6 +64,26 @@ class FaceDetector:
         if self._detector is not None:
             return
 
+        if self.backend == "mtcnn":
+            try:
+                import torch
+                from facenet_pytorch import MTCNN
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                self._detector = MTCNN(
+                    keep_all=True,
+                    select_largest=False,
+                    min_face_size=20,
+                    thresholds=[0.6, 0.7, 0.7],
+                    factor=0.709,
+                    post_process=False,
+                    device=device,
+                )
+                logger.info(f"MTCNN face detector initialized (device: {device})")
+                return
+            except Exception as e:
+                logger.warning(f"MTCNN init failed: {e}, falling back to OpenCV DNN")
+
         if self.backend == "retinaface":
             try:
                 import os
@@ -109,10 +129,43 @@ class FaceDetector:
         """
         self._init_detector()
 
-        if isinstance(self._detector, str) and self._detector == "opencv_dnn":
+        if self.backend == "mtcnn" and not isinstance(self._detector, str):
+            return self._detect_mtcnn(frame)
+        elif isinstance(self._detector, str) and self._detector == "opencv_dnn":
             return self._detect_opencv(frame)
         else:
             return self._detect_insightface(frame)
+
+    def _detect_mtcnn(self, frame: np.ndarray) -> List[FaceDetection]:
+        """Detect using MTCNN (facenet-pytorch)."""
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        try:
+            boxes, probs, landmarks = self._detector.detect(rgb_frame, landmarks=True)
+        except Exception as e:
+            logger.warning(f"MTCNN detection error: {e}")
+            return []
+
+        if boxes is None or len(boxes) == 0:
+            return []
+
+        detections = []
+        for bbox, prob, lm in zip(boxes, probs, landmarks):
+            if prob is None or float(prob) < self.detection_threshold:
+                continue
+
+            int_bbox = bbox.astype(int)
+            confidence = float(prob)
+            face_crop = self._crop_face(frame, int_bbox)
+
+            detections.append(FaceDetection(
+                bbox=int_bbox,
+                confidence=confidence,
+                landmarks=lm if lm is not None else np.array([]),
+                face_crop=face_crop,
+            ))
+
+        detections.sort(key=lambda x: x.confidence, reverse=True)
+        return detections[:self.max_faces]
 
     def _detect_insightface(self, frame: np.ndarray) -> List[FaceDetection]:
         """Detect using InsightFace RetinaFace."""

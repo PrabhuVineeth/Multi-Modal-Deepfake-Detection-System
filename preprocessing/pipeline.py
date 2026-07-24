@@ -48,6 +48,7 @@ class PreprocessedData:
     duration: float = 0.0
     has_audio: bool = True
     has_faces: bool = True
+    face_detection_rate: float = 1.0
 
     @property
     def is_valid(self) -> bool:
@@ -144,6 +145,16 @@ class PreprocessingPipeline:
             result.num_frames = len(result.frames)
             result.duration = result.timestamps[-1] if result.timestamps else 0.0
             logger.info(f"Frames: {result.num_frames} extracted, {result.duration:.2f}s")
+
+            # Trim audio waveform to match video duration to prevent AV-sync false positives
+            if result.has_audio and result.duration > 0:
+                max_audio_samples = int(result.duration * result.audio_sample_rate) + result.audio_sample_rate  # +1s buffer
+                if len(result.audio_waveform) > max_audio_samples:
+                    logger.info(
+                        f"Trimming audio from {len(result.audio_waveform)/result.audio_sample_rate:.2f}s "
+                        f"to {max_audio_samples/result.audio_sample_rate:.2f}s to match video duration"
+                    )
+                    result.audio_waveform = result.audio_waveform[:max_audio_samples]
         except Exception as e:
             logger.error(f"Frame extraction failed: {e}")
             raise RuntimeError(f"Cannot extract frames from: {video_path}") from e
@@ -186,6 +197,7 @@ class PreprocessingPipeline:
 
             face_rate = len(valid_frame_indices) / max(result.num_frames, 1)
             result.has_faces = face_rate > 0.3  # At least 30% of frames have faces
+            result.face_detection_rate = face_rate
             logger.info(
                 f"Faces: detected in {len(valid_frame_indices)}/{result.num_frames} "
                 f"frames ({face_rate:.1%})"

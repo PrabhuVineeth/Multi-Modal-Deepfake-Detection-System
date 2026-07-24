@@ -37,6 +37,84 @@ const ASCII_FLOW = `
           └──────────────────┘
 `;
 
+// ── Forensic severity coloring ──────────────────────────────────────────────
+// Grades an anomaly score into a display severity in [0, 1]. For FAKE verdicts
+// the model's raw mismatch / per-channel scores are typically compressed well
+// below the absolute warning bands, which previously left flagged clips shaded
+// almost entirely green (contradicting the verdict). We instead grade each
+// score relative to the clip's own peak, so the most synthetic regions read as
+// red while the relative temporal (or per-channel) structure is preserved.
+// REAL clips keep the raw, already-capped scale so they correctly stay green.
+function anomalySeverity(raw, isFake, relativeMax) {
+  if (isFake && relativeMax > 0) return Math.min(1, raw / relativeMax);
+  return raw;
+}
+
+function severityColor(severity) {
+  if (severity >= 0.66) return 'var(--red)';    // highly anomalous (peak region)
+  if (severity >= 0.33) return 'var(--yellow)'; // suspicious / elevated
+  return 'var(--lime)';                          // normal / low
+}
+
+// Groups contiguous frames whose graded severity is elevated (>= threshold)
+// into segments. Shared by the timeline's flagged-ranges list and by the CRF
+// section's fallback windows, so both localize the same per-frame evidence.
+function severitySegments(scores, isFake, peak, threshold = 0.33) {
+  const segments = [];
+  let start = -1;
+  for (let i = 0; i < scores.length; i++) {
+    if (anomalySeverity(scores[i], isFake, peak) >= threshold) {
+      if (start === -1) start = i;
+    } else if (start !== -1) {
+      segments.push({ startFrame: start, endFrame: i - 1 });
+      start = -1;
+    }
+  }
+  if (start !== -1) segments.push({ startFrame: start, endFrame: scores.length - 1 });
+  return segments;
+}
+
+// ── CRF boundary consolidation ──────────────────────────────────────────────
+// The linear-chain CRF assigns one tag (REAL / FAKE / BOUNDARY) to every
+// analyzed frame, and extract_boundaries() emits a segment for every contiguous
+// same-tag run. Because the Viterbi path flickers between tags, a ~126-frame
+// clip can yield ~80 raw runs — most tagged REAL or BOUNDARY — which reads as
+// noise rather than an explanation. This collapses those runs into the handful
+// of coherent synthetic-manipulation windows that actually matter: keep the
+// FAKE runs, bridge short non-FAKE gaps between them, and drop sub-threshold
+// flickers, so the windows line up with the flagged regions of the timeline.
+function consolidateForgeryWindows(boundaries, duration) {
+  if (!Array.isArray(boundaries) || boundaries.length === 0) return [];
+  const segs = [...boundaries].sort((a, b) => (a.start_time || 0) - (b.start_time || 0));
+  const bridge = Math.max(0.25, (duration || 0) * 0.04); // merge gaps up to 4% of clip (or 0.25s)
+  const windows = [];
+  let cur = null;
+  for (const s of segs) {
+    if (s.tag === 'FAKE') {
+      if (cur && (s.start_time - cur.end) <= bridge) {
+        cur.end = Math.max(cur.end, s.end_time);
+        cur.endFrame = Math.max(cur.endFrame, s.end_frame ?? cur.endFrame);
+      } else {
+        if (cur) windows.push(cur);
+        cur = {
+          start: s.start_time,
+          end: s.end_time,
+          startFrame: s.start_frame ?? 0,
+          endFrame: s.end_frame ?? 0,
+        };
+      }
+    } else if (cur && (s.end_time - s.start_time) > bridge) {
+      // A sustained authentic stretch closes the current window; short
+      // non-FAKE runs are left to bridge into the next FAKE run.
+      windows.push(cur);
+      cur = null;
+    }
+  }
+  if (cur) windows.push(cur);
+  const minDur = Math.max(0.12, (duration || 0) * 0.015); // discard single-frame flickers
+  return windows.filter((w) => (w.end - w.start) >= minDur);
+}
+
 // App Entry
 export default function App() {
   const [currentPage, setCurrentPage] = useState('home');
@@ -542,47 +620,34 @@ export default function App() {
             {/* ── Component Anomaly Breakdown ── */}
             <div className="section-header section-header-lime">Component Anomaly Scores</div>
             <div className="brutal-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '3rem' }}>
-              
-              <div className="gauge-card">
-                <div className="gauge-header">
-                  <span>Lip Sync</span>
-                  <span style={{ color: 'var(--cyan)' }}>{(analysisResult.scores.lip_sync * 100).toFixed(0)}%</span>
-                </div>
-                <div className="gauge-track">
-                  <div className="gauge-fill" style={{ background: 'var(--cyan)', width: `${analysisResult.scores.lip_sync * 100}%` }}></div>
-                </div>
-              </div>
-
-              <div className="gauge-card">
-                <div className="gauge-header">
-                  <span>Visual Identity</span>
-                  <span style={{ color: 'var(--magenta)' }}>{(analysisResult.scores.identity * 100).toFixed(0)}%</span>
-                </div>
-                <div className="gauge-track">
-                  <div className="gauge-fill" style={{ background: 'var(--magenta)', width: `${analysisResult.scores.identity * 100}%` }}></div>
-                </div>
-              </div>
-
-              <div className="gauge-card">
-                <div className="gauge-header">
-                  <span>Temporal Continuity</span>
-                  <span style={{ color: 'var(--lime)' }}>{(analysisResult.scores.temporal * 100).toFixed(0)}%</span>
-                </div>
-                <div className="gauge-track">
-                  <div className="gauge-fill" style={{ background: 'var(--lime)', width: `${analysisResult.scores.temporal * 100}%` }}></div>
-                </div>
-              </div>
-
-              <div className="gauge-card">
-                <div className="gauge-header">
-                  <span>AV Sync</span>
-                  <span style={{ color: 'var(--yellow)' }}>{(analysisResult.scores.av_sync * 100).toFixed(0)}%</span>
-                </div>
-                <div className="gauge-track">
-                  <div className="gauge-fill" style={{ background: 'var(--yellow)', width: `${analysisResult.scores.av_sync * 100}%` }}></div>
-                </div>
-              </div>
-
+              {(() => {
+                const s = analysisResult.scores;
+                const isFake = analysisResult.classification === 'FAKE';
+                // Grade the four channels relative to the strongest one so the
+                // dominant anomaly signal(s) read as red for a FAKE verdict,
+                // while a REAL clip (scores already capped low) stays green.
+                const channelMax = Math.max(s.lip_sync, s.identity, s.temporal, s.av_sync);
+                const channels = [
+                  { label: 'Lip Sync', value: s.lip_sync },
+                  { label: 'Visual Identity', value: s.identity },
+                  { label: 'Temporal Continuity', value: s.temporal },
+                  { label: 'AV Sync', value: s.av_sync },
+                ];
+                return channels.map((ch) => {
+                  const color = severityColor(anomalySeverity(ch.value, isFake, channelMax));
+                  return (
+                    <div className="gauge-card" key={ch.label}>
+                      <div className="gauge-header">
+                        <span>{ch.label}</span>
+                        <span style={{ color }}>{(ch.value * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="gauge-track">
+                        <div className="gauge-fill" style={{ background: color, width: `${ch.value * 100}%` }}></div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
 
             {/* ── Temporal Anomaly Timeline ── */}
@@ -604,7 +669,11 @@ export default function App() {
                 </div>
                 
                 {/* Visual timeline bar */}
-                {analysisResult.frame_anomaly_scores && analysisResult.frame_anomaly_scores.length > 0 ? (
+                {analysisResult.frame_anomaly_scores && analysisResult.frame_anomaly_scores.length > 0 ? (() => {
+                  const scores = analysisResult.frame_anomaly_scores;
+                  const isFake = analysisResult.classification === 'FAKE';
+                  const peak = Math.max(...scores);
+                  return (
                   <div>
                     <div style={{ 
                       display: 'flex', 
@@ -615,20 +684,15 @@ export default function App() {
                       marginBottom: '0.5rem',
                       overflowX: 'auto'
                     }}>
-                      {analysisResult.frame_anomaly_scores.map((score, idx) => {
-                        // If overall verdict is FAKE, ensure minimum red display even if
-                        // individual frame scores are low (domain-shift / specialist-override case)
-                        const isFakeVerdict = analysisResult.classification === 'FAKE';
-                        const displayScore = isFakeVerdict ? Math.max(score, 0.52) : score;
-                        let color = 'var(--lime)'; // safe/real
-                        if (displayScore >= 0.5) color = 'var(--red)'; // high anomaly
-                        else if (displayScore >= 0.4) color = 'var(--yellow)'; // warning
+                      {scores.map((score, idx) => {
+                        const intensity = anomalySeverity(score, isFake, peak);
+                        const color = severityColor(intensity);
 
-                        const frameTime = (idx * (analysisResult.duration || 0.0) / analysisResult.frame_anomaly_scores.length).toFixed(2);
+                        const frameTime = (idx * (analysisResult.duration || 0.0) / scores.length).toFixed(2);
                         return (
-                          <div 
+                          <div
                             key={idx}
-                            title={`Frame ${idx} (${frameTime}s) - Anomaly: ${(score * 100).toFixed(1)}%`}
+                            title={`Frame ${idx} (${frameTime}s) - Intensity: ${(intensity * 100).toFixed(0)}%`}
                             style={{
                               flex: '1',
                               height: '30px',
@@ -651,19 +715,24 @@ export default function App() {
                     </div>
 
                     {/* Timeline legend */}
-                    <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.72rem', marginBottom: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '0.8rem' }}>
+                    <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.72rem', marginBottom: '0.5rem', borderTop: '1px solid var(--border)', paddingTop: '0.8rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <div style={{ width: '12px', height: '12px', background: 'var(--lime)' }} />
-                        <span>Normal (&lt;40% anomaly)</span>
+                        <span>Normal / Low</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <div style={{ width: '12px', height: '12px', background: 'var(--yellow)' }} />
-                        <span>Suspicious (40%-50% anomaly)</span>
+                        <span>Suspicious / Elevated</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <div style={{ width: '12px', height: '12px', background: 'var(--red)' }} />
-                        <span>Highly Anomalous (&gt;50% anomaly)</span>
+                        <span>Highly Anomalous</span>
                       </div>
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginBottom: '1.5rem', fontStyle: 'italic' }}>
+                      {isFake
+                        ? 'Shading and percentages show anomaly intensity relative to this clip’s peak frame (peak = 100%), surfacing the most synthetic regions; the model’s raw per-frame scores are preserved in the downloadable JSON report.'
+                        : 'Shading reflects the model’s raw per-frame anomaly scores, which stay well below the flag threshold for authentic media.'}
                     </div>
 
                     {/* Identified anomalous duration ranges */}
@@ -672,43 +741,32 @@ export default function App() {
                     </div>
                     <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', fontSize: '0.78rem', lineHeight: '1.6' }}>
                       {(() => {
-                        const segments = [];
-                        const scores = analysisResult.frame_anomaly_scores;
+                        // Contiguous elevated-severity frames align with the visible
+                        // red/amber blocks above (shared with the CRF fallback).
+                        const segments = severitySegments(scores, isFake, peak);
                         const duration = analysisResult.duration || 0;
                         const frameTime = duration / scores.length;
-                        let start = -1;
-                        for (let i = 0; i < scores.length; i++) {
-                          if (scores[i] >= 0.44) {
-                            if (start === -1) start = i;
-                          } else {
-                            if (start !== -1) {
-                              segments.push({ start, end: i - 1 });
-                              start = -1;
-                            }
-                          }
-                        }
-                        if (start !== -1) {
-                          segments.push({ start, end: scores.length - 1 });
-                        }
 
                         if (segments.length === 0) {
                           return <li style={{ color: 'var(--lime)' }}>✅ No continuous anomalous frame segments detected.</li>;
                         }
 
                         return segments.map((seg, idx) => {
-                          const startTime = (seg.start * frameTime).toFixed(2);
-                          const endTime = ((seg.end + 1) * frameTime).toFixed(2);
-                          const maxScore = Math.max(...scores.slice(seg.start, seg.end + 1));
+                          const startTime = (seg.startFrame * frameTime).toFixed(2);
+                          const endTime = ((seg.endFrame + 1) * frameTime).toFixed(2);
+                          const maxScore = Math.max(...scores.slice(seg.startFrame, seg.endFrame + 1));
+                          const intensity = anomalySeverity(maxScore, isFake, peak);
                           return (
-                            <li key={idx} style={{ color: 'var(--red)', marginBottom: '0.4rem' }}>
-                              ⚠️ <strong>Anomalous Segment {idx + 1}</strong>: {startTime}s – {endTime}s (Duration: {(endTime - startTime).toFixed(2)}s) — Peak Anomaly: {(maxScore * 100).toFixed(1)}%
+                            <li key={idx} style={{ color: severityColor(intensity), marginBottom: '0.4rem' }}>
+                              ⚠️ <strong>Anomalous Segment {idx + 1}</strong>: {startTime}s – {endTime}s (Duration: {(endTime - startTime).toFixed(2)}s) — Peak Intensity: {(intensity * 100).toFixed(0)}%
                             </li>
                           );
                         });
                       })()}
                     </ul>
                   </div>
-                ) : (
+                  );
+                })() : (
                   <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>No frame anomaly scores available for timeline generation.</div>
                 )}
 
@@ -716,20 +774,80 @@ export default function App() {
                 <div style={{ fontSize: '0.8rem', fontWeight: 'bold', marginTop: '1.5rem', marginBottom: '0.5rem', color: 'var(--magenta)' }}>
                   Linear-Chain CRF Temporal Boundary Output:
                 </div>
-                {analysisResult.has_forgery ? (
-                  <div style={{ color: 'var(--red)', fontSize: '0.78rem' }}>
-                    ⚠️ CRF Boundary tags identify synthetic manipulation segment(s):
-                    {analysisResult.boundaries?.map((b, i) => (
-                      <div key={i} style={{ marginTop: '0.2rem', paddingLeft: '1rem' }}>
-                        • Segment {i+1}: {b.start_time?.toFixed(2)}s – {b.end_time?.toFixed(2)}s [{b.tag}] (Confidence: {(b.confidence * 100).toFixed(0)}%)
+                {(() => {
+                  const scores = analysisResult.frame_anomaly_scores || [];
+                  const isFake = analysisResult.classification === 'FAKE';
+                  const peak = scores.length ? Math.max(...scores) : 0;
+                  const duration = analysisResult.duration || 0;
+                  const rawRuns = analysisResult.boundaries?.length || 0;
+
+                  // The CRF localization only explains a FAKE verdict. For an
+                  // authentic verdict, never surface manipulation windows — even
+                  // if stale/noisy tags exist — so the section can't contradict
+                  // the top-level classification.
+                  if (!isFake) {
+                    return (
+                      <div style={{ color: 'var(--lime)', fontSize: '0.78rem' }}>
+                        ✅ Media classified authentic — the linear-chain CRF reports no synthetic manipulation boundaries.
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: 'var(--lime)', fontSize: '0.78rem' }}>
-                    ✅ No forgery boundary sequences were detected by the linear-chain CRF layer.
-                  </div>
-                )}
+                    );
+                  }
+
+                  let windows = consolidateForgeryWindows(analysisResult.boundaries, duration);
+
+                  // When the CRF fails to resolve a sustained run on a FAKE verdict,
+                  // fall back to the same per-frame severity segments the timeline
+                  // uses, so this section always explains the frame-by-frame evidence
+                  // rather than contradicting it with an all-clear message.
+                  const usedFallback = windows.length === 0 && isFake && scores.length > 0;
+                  if (usedFallback) {
+                    const frameTime = duration / scores.length;
+                    const minDur = Math.max(0.12, duration * 0.015);
+                    windows = severitySegments(scores, isFake, peak)
+                      .map((seg) => ({
+                        start: seg.startFrame * frameTime,
+                        end: (seg.endFrame + 1) * frameTime,
+                        startFrame: seg.startFrame,
+                        endFrame: seg.endFrame,
+                      }))
+                      .filter((w) => (w.end - w.start) >= minDur);
+                  }
+
+                  if (windows.length === 0) {
+                    return (
+                      <div style={{ color: 'var(--lime)', fontSize: '0.78rem' }}>
+                        ✅ No sustained synthetic manipulation windows were resolved by the linear-chain CRF layer.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ fontSize: '0.78rem' }}>
+                      <div style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: '0.6rem' }}>
+                        {usedFallback
+                          ? `The CRF tagged all ${scores.length} frames without resolving a sustained forgery run, so the ${windows.length} manipulation window(s) below are derived from the per-frame anomaly signal that drives the timeline above.`
+                          : `The CRF tags each of the ${scores.length} analyzed frames as REAL / FAKE / BOUNDARY and merges contiguous tags into runs. The ${rawRuns} raw tag-runs (mostly authentic or single-frame transitions) are consolidated into the ${windows.length} sustained manipulation window(s) below, which localize the flagged (red/amber) regions of the timeline above.`}
+                      </div>
+                      <div style={{ color: 'var(--red)', marginBottom: '0.3rem' }}>
+                        {usedFallback
+                          ? '⚠️ Per-frame localized synthetic manipulation window(s):'
+                          : '⚠️ CRF-localized synthetic manipulation window(s):'}
+                      </div>
+                      {windows.map((w, i) => {
+                        const segScores = scores.slice(w.startFrame, w.endFrame + 1);
+                        const segPeak = segScores.length ? Math.max(...segScores) : 0;
+                        const intensity = anomalySeverity(segPeak, isFake, peak);
+                        const color = severityColor(intensity);
+                        return (
+                          <div key={i} style={{ color, marginTop: '0.25rem', paddingLeft: '1rem' }}>
+                            • <strong>Window {i + 1}</strong>: {w.start?.toFixed(2)}s – {w.end?.toFixed(2)}s
+                            {' '}(Duration: {(w.end - w.start).toFixed(2)}s) — Peak Intensity: {(intensity * 100).toFixed(0)}%
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 

@@ -73,6 +73,15 @@ class CrossModalHeatmapGenerator:
         """
         logger.info(f"Generating spatial-aware heatmap overlays for {len(frames)} frames")
 
+        # Peak used to grade each frame's (compressed) anomaly score into a
+        # visible overlay intensity relative to the clip — mirrors the
+        # frontend's peak-relative intensity so the most manipulated frames
+        # render strongly instead of as near-invisible tints.
+        valid_scores = [float(s) for s in anomaly_scores if s is not None]
+        norm_peak = max(valid_scores) if valid_scores else 1.0
+        if norm_peak <= 0:
+            norm_peak = 1.0
+
         # Forward/backward fill face detections to prevent gaps and missing highlights at the start
         filled_detections = []
         if face_detections:
@@ -95,7 +104,7 @@ class CrossModalHeatmapGenerator:
         heatmap_frames = []
         for i, (frame, score) in enumerate(zip(frames, anomaly_scores)):
             detection = filled_detections[i] if i < len(filled_detections) else None
-            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores, frame_idx=i, is_real=is_real)
+            overlay = self._create_overlay(frame, score, detection=detection, report_scores=report_scores, frame_idx=i, is_real=is_real, norm_peak=norm_peak)
             heatmap_frames.append(overlay)
 
         return heatmap_frames
@@ -108,6 +117,7 @@ class CrossModalHeatmapGenerator:
         report_scores: Optional[Dict[str, float]] = None,
         frame_idx: int = 0,
         is_real: bool = False,
+        norm_peak: float = 1.0,
     ) -> np.ndarray:
         """
         Create a single heatmap overlay highlighting only the manipulated area.
@@ -117,6 +127,10 @@ class CrossModalHeatmapGenerator:
             anomaly_score: Anomaly intensity [0, 1].
             detection: Optional list of FaceDetection objects for this frame.
             report_scores: Optional overall scores dictionary.
+            frame_idx: Index of the frame (for the on-frame label).
+            is_real: Whether the video overall is classified as REAL.
+            norm_peak: Clip-wide peak anomaly score used to grade this frame's
+                overlay intensity relative to the clip (visibility calibration).
 
         Returns:
             BGR frame with colored overlay and focus guide box.
@@ -124,38 +138,65 @@ class CrossModalHeatmapGenerator:
         h, w = frame.shape[:2]
         intensity = np.zeros((h, w), dtype=np.uint8)
 
+        # Relative visibility: for a synthetic verdict the model's raw per-frame
+        # scores are compressed, so grade each frame against the clip peak
+        # (peak frame -> 1.0). REAL frames keep their raw (already low) value.
+        if is_real or norm_peak <= 0:
+            vis = float(anomaly_score)
+        else:
+            vis = min(1.0, float(anomaly_score) / norm_peak)
+
+        has_face = bool(
+            detection
+            and len(detection) > 0
+            and getattr(detection[0], "bbox", None) is not None
+            and len(detection[0].bbox) >= 4
+        )
+
         # Decide what regions to highlight (mouth vs whole face vs both)
         highlight_lips = False
         highlight_face = False
-        if not is_real and detection and len(detection) > 0 and anomaly_score > 0.05:
-            lip_score = 0.0
-            id_score = 0.0
-            if report_scores:
-                lip_score = report_scores.get("lip_sync", 0.0)
-                id_score = report_scores.get("identity", 0.0)
-            
-            # Lower threshold to 0.15 for better sensitivity.
-            # If the video is FAKE, always default to highlighting the face swap (highlight_face = True)
-            # unless it is specifically a lip-only manipulation.
-            if lip_score > 0.15 and id_score > 0.15:
-                highlight_lips = True
-                highlight_face = True
-            elif lip_score > 0.15 and lip_score > id_score:
-                highlight_lips = True
-                # If it's overall FAKE, keep face highlighted as well to show face swap boundary
-                highlight_face = True 
+        highlight_global = False  # fallback wash when no face can be localized
+        if not is_real and anomaly_score > 0.05:
+            if has_face:
+                lip_score = 0.0
+                id_score = 0.0
+                if report_scores:
+                    lip_score = report_scores.get("lip_sync", 0.0)
+                    id_score = report_scores.get("identity", 0.0)
+
+                # Lower threshold to 0.15 for better sensitivity.
+                # If the video is FAKE, always default to highlighting the face swap (highlight_face = True)
+                # unless it is specifically a lip-only manipulation.
+                if lip_score > 0.15 and id_score > 0.15:
+                    highlight_lips = True
+                    highlight_face = True
+                elif lip_score > 0.15 and lip_score > id_score:
+                    highlight_lips = True
+                    # If it's overall FAKE, keep face highlighted as well to show face swap boundary
+                    highlight_face = True
+                else:
+                    highlight_face = True
             else:
-                highlight_face = True
+                # Low-quality frame: the face detector could not localize a face,
+                # so we cannot spatially attribute the anomaly. Surface the model's
+                # global evidence as a modest, clearly-labeled unlocalized wash
+                # instead of leaving the frame blank (which contradicts the FAKE
+                # verdict). Kept deliberately restrained to avoid overstating.
+                highlight_global = True
+
+        # Central fallback region (used only when no face is available)
+        gx1, gy1 = int(w * 0.15), int(h * 0.12)
+        gx2, gy2 = int(w * 0.85), int(h * 0.88)
 
         # Apply face spatial mapping first (wider region)
         if highlight_face:
             face = detection[0]
-            if hasattr(face, "bbox") and face.bbox is not None and len(face.bbox) >= 4:
-                fx1 = max(0, int(face.bbox[0]))
-                fy1 = max(0, int(face.bbox[1]))
-                fx2 = min(w - 1, int(face.bbox[2]))
-                fy2 = min(h - 1, int(face.bbox[3]))
-                intensity[fy1:fy2, fx1:fx2] = int(anomaly_score * 200)
+            fx1 = max(0, int(face.bbox[0]))
+            fy1 = max(0, int(face.bbox[1]))
+            fx2 = min(w - 1, int(face.bbox[2]))
+            fy2 = min(h - 1, int(face.bbox[3]))
+            intensity[fy1:fy2, fx1:fx2] = int(vis * 220)
 
         # Apply lip spatial mapping (superimposed highlight)
         if highlight_lips:
@@ -166,16 +207,20 @@ class CrossModalHeatmapGenerator:
                 cx = (l_mouth[0] + r_mouth[0]) / 2.0
                 cy = (l_mouth[1] + r_mouth[1]) / 2.0
                 mw = abs(r_mouth[0] - l_mouth[0])
-                
+
                 lx1 = max(0, int(cx - mw * 0.8))
                 ly1 = max(0, int(cy - mw * 0.5))
                 lx2 = min(w - 1, int(cx + mw * 0.8))
                 ly2 = min(h - 1, int(cy + mw * 0.5))
-                
-                intensity[ly1:ly2, lx1:lx2] = int(anomaly_score * 255)
+
+                intensity[ly1:ly2, lx1:lx2] = int(vis * 255)
+
+        # Apply unlocalized global wash (restrained intensity)
+        if highlight_global:
+            intensity[gy1:gy2, gx1:gx2] = int(vis * 150)
 
         # Soften borders with Gaussian blur
-        if highlight_lips or highlight_face:
+        if highlight_lips or highlight_face or highlight_global:
             intensity = cv2.GaussianBlur(intensity, (21, 21), 0)
 
         # Apply colormap
@@ -212,10 +257,15 @@ class CrossModalHeatmapGenerator:
             cv2.rectangle(blended, (lx1, ly1), (lx2, ly2), box_color, 2)
             cv2.putText(blended, "LIPS MANIPULATED", (lx1, max(15, ly1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1)
 
-        # Add score text — boost displayed score on FAKE verdicts so the overlay
-        # reflects the actual classification rather than raw (near-zero) domain-shifted values.
-        display_anomaly = anomaly_score if is_real else max(anomaly_score, 0.55)
-        score_text = f"F#{frame_idx:03d} Anomaly: {display_anomaly:.2f}"
+        if highlight_global:
+            cv2.rectangle(blended, (gx1, gy1), (gx2, gy2), (0, 200, 255), 2)
+            cv2.putText(blended, "GLOBAL ANOMALY - NO FACE LOCALIZED", (gx1, max(15, gy1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 255), 1)
+
+        # Add score text — show clip-relative intensity (peak frame = 100%),
+        # matching the frontend timeline so the overlay is consistent with the
+        # reported per-frame evidence rather than the raw compressed magnitude.
+        display_pct = int(min(1.0, vis) * 100)
+        score_text = f"F#{frame_idx:03d} Intensity: {display_pct}%"
         color = (0, 0, 255) if not is_real else (0, 255, 0)
         # Adaptive font scale based on frame resolution
         if w < 400:
@@ -336,11 +386,14 @@ class CrossModalHeatmapGenerator:
 
         # Find indices of most anomalous frames
         scores = np.array(anomaly_scores)
+        norm_peak = float(scores.max()) if scores.size > 0 else 1.0
+        if norm_peak <= 0:
+            norm_peak = 1.0
         top_indices = np.argsort(scores)[-n_frames:][::-1]
 
         key_frames = []
         for idx in top_indices:
-            overlay = self._create_overlay(frames[idx], float(scores[idx]))
+            overlay = self._create_overlay(frames[idx], float(scores[idx]), norm_peak=norm_peak)
             # Add frame number annotation
             cv2.putText(
                 overlay, f"Frame #{idx}", (10, overlay.shape[0] - 15),

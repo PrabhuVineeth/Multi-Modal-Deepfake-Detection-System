@@ -202,6 +202,7 @@ class ForensicInferencePipeline:
             else:
                 forensic_output = self.model(**tensors)
 
+
         # ── Step 4: Post-process ──
         processing_time = time.time() - start_time
         
@@ -234,6 +235,10 @@ class ForensicInferencePipeline:
             key_frames = []
             if generate_heatmap and report.frame_anomaly_scores:
                 scores = np.array(getattr(report, "raw_frame_anomaly_scores", report.frame_anomaly_scores))
+                # Clip-wide peak for relative overlay-intensity calibration
+                norm_peak = float(scores.max()) if scores.size > 0 else 1.0
+                if norm_peak <= 0:
+                    norm_peak = 1.0
                 # Get indices of top 5 highest anomaly scores
                 top_indices = np.argsort(scores)[-5:][::-1]
                 # Sort indices chronologically
@@ -249,7 +254,8 @@ class ForensicInferencePipeline:
                             detection=detection,
                             report_scores=report.to_dict()["scores"],
                             frame_idx=idx,
-                            is_real=(report.classification == "REAL")
+                            is_real=(report.classification == "REAL"),
+                            norm_peak=norm_peak,
                         )
                         key_frames.append(overlay)
                         
@@ -290,6 +296,13 @@ class ForensicInferencePipeline:
         audio = torch.tensor(
             preprocessed.audio_waveform, dtype=torch.float32
         ).unsqueeze(0).to(self.device)
+
+        # Trim audio to match video duration to prevent AV-sync false positives
+        if preprocessed.duration > 0 and preprocessed.audio_sample_rate > 0:
+            max_samples = int(preprocessed.duration * preprocessed.audio_sample_rate) + preprocessed.audio_sample_rate
+            if audio.shape[1] > max_samples:
+                audio = audio[:, :max_samples]
+                logger.debug(f"Audio trimmed to {max_samples} samples to match video duration")
 
         # Zero out audio if visual_only routing is enabled
         dataset_config = getattr(self, "dataset_config", None)
