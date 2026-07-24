@@ -44,6 +44,9 @@ class VideoEncoder(nn.Module):
 
         self._encoder = None
         self._processor = None
+        # False if _load_backbone had to fall back to random init. Benchmarks must
+        # check this -- a randomly initialized backbone silently invalidates results.
+        self.pretrained = False
 
         # Projection head
         self.projection = nn.Sequential(
@@ -75,24 +78,22 @@ class VideoEncoder(nn.Module):
         # Move encoder to the device of the projection parameters
         device = next(self.projection.parameters()).device
         try:
-            if "patch32" in self.model_name.lower():
-                from transformers import ViTConfig, ViTModel
-                config = ViTConfig(image_size=224, patch_size=32, hidden_size=768)
-                self._encoder = ViTModel(config).to(device)
-                logger.info(f"Initialized ViT-32 architecture offline.")
-            elif "swin" in self.model_name.lower():
-                from transformers import SwinConfig, SwinModel
-                config = SwinConfig(image_size=224, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24])
-                self._encoder = SwinModel(config).to(device)
-                logger.info(f"Initialized Swin architecture offline.")
-            else:
-                self._encoder = AutoModel.from_pretrained(self.model_name, local_files_only=True).to(device)
-                logger.info(f"Pretrained vision model {self.model_name} loaded successfully from local cache.")
+            self._encoder = AutoModel.from_pretrained(self.model_name).to(device)
+            self.pretrained = True
+            logger.info(f"Pretrained weights loaded for {self.model_name}")
         except Exception as e:
-            logger.warning(f"Fallback to config initialization for {self.model_name}: {e}")
+            # Random init used to happen silently here, which made every benchmark
+            # run against this backbone meaningless. Keep the fallback so inference
+            # still runs, but make it loud and record it on self.pretrained.
+            logger.error(
+                f"Could not load pretrained weights for {self.model_name}: {e}. "
+                f"Falling back to RANDOM INITIALIZATION - any benchmark using this "
+                f"backbone is invalid."
+            )
             from transformers import ViTConfig, ViTModel
             config = ViTConfig(image_size=224, patch_size=16, hidden_size=768)
             self._encoder = ViTModel(config).to(device)
+            self.pretrained = False
 
         # Freeze embeddings if present
         if hasattr(self._encoder, "embeddings"):
@@ -182,6 +183,47 @@ class VideoEncoder(nn.Module):
         # Project to target dimension (512)
         projected = self.projection(feat_embedding)  # [B, projection_dim]
         return projected
+
+    def extract_backbone_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """
+        Raw pretrained backbone embedding, bypassing the pooler and projection head.
+
+        `_encode_single` reads `pooler_output` and then applies `self.projection`.
+        Neither carries pretrained weights: the ViT pooler is absent from the
+        HuggingFace checkpoints and the projection head is only learned during
+        end-to-end training. For frozen-backbone benchmarking both are random,
+        so this method reads the CLS token (ViT) or mean-pooled tokens (Swin)
+        directly off `last_hidden_state` instead.
+
+        Args:
+            pixel_values: [B, T, C, H, W] or [B, C, H, W].
+
+        Returns:
+            [B, T, hidden_size] or [B, hidden_size] (hidden_size is 768 for
+            ViT-Base and Swin-Tiny alike).
+        """
+        self._load_backbone()
+
+        squeeze_time = pixel_values.dim() == 4
+        if squeeze_time:
+            pixel_values = pixel_values.unsqueeze(1)
+
+        B, T, C, H, W = pixel_values.shape
+        flat = pixel_values.reshape(B * T, C, H, W)
+
+        chunk_size = 32
+        feats = []
+        is_swin = "swin" in self.model_name.lower()
+        for i in range(0, B * T, chunk_size):
+            outputs = self._encoder(
+                pixel_values=flat[i : i + chunk_size], output_hidden_states=False
+            )
+            hidden = outputs.last_hidden_state  # [b, tokens, hidden]
+            # Swin has no CLS token; ViT keeps it at index 0.
+            feats.append(hidden.mean(dim=1) if is_swin else hidden[:, 0, :])
+
+        embeddings = torch.cat(feats, dim=0).reshape(B, T, -1)
+        return embeddings.squeeze(1) if squeeze_time else embeddings
 
     def get_patch_embeddings(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """

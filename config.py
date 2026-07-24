@@ -69,6 +69,11 @@ class PreprocessConfig:
     face_detection_backend: str = "retinaface"  # "retinaface" or "mtcnn"
     max_faces: int = 1                  # Max faces to track per video
     face_padding: float = 0.3           # Padding ratio around detected face
+    # Border added to the frame *before* detection, as a ratio of frame height.
+    # Datasets that ship pre-cropped faces (FakeAVCeleb is 224x224 face-only) put
+    # the face outside RetinaFace's anchor scales because it fills the frame;
+    # padding restores it. 0.0 = off, which is correct for full-scene video.
+    face_detect_pad_ratio: float = 0.0
 
     # Mouth ROI
     mouth_roi_size: Tuple[int, int] = (96, 96)

@@ -93,6 +93,7 @@ class PreprocessingPipeline:
             crop_size=self.config.face_crop_size,
             max_faces=self.config.max_faces,
             padding=self.config.face_padding,
+            detect_pad_ratio=self.config.face_detect_pad_ratio,
         )
         self.mouth_extractor = MouthROIExtractor(
             roi_size=self.config.mouth_roi_size,

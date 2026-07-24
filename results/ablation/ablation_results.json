@@ -1,0 +1,319 @@
+{
+  "config": {
+    "dataset": "FakeAVCeleb v1.2",
+    "videos": 1000,
+    "max_frames": 32,
+    "folds": 5,
+    "epochs": 30,
+    "seed": 42,
+    "detect_pad_ratio": 0.5,
+    "backbones": {
+      "ViT-16": "google/vit-base-patch16-224",
+      "ViT-32": "google/vit-base-patch32-224-in21k",
+      "Swin-Tiny": "microsoft/swin-tiny-patch4-window7-224"
+    },
+    "detectors": [
+      "retinaface",
+      "mtcnn"
+    ],
+    "anchor_cell": "retinaface+ViT-16",
+    "protocol": "frozen pretrained backbones; trainable fusion head; identity-disjoint StratifiedGroupKFold on FakeAVCeleb id00XXX",
+    "notes": [
+      "ViT-32 uses google/vit-base-patch32-224-in21k: google/vit-base-patch32-224 does not exist on the Hub. ViT-16 is in21k->in1k, ViT-32 is in21k-only.",
+      "Backbones are frozen, so results measure representation quality, not fine-tuning behaviour.",
+      "detect_pad_ratio=0.5 pads the frame before detection. FakeAVCeleb ships 224x224 pre-cropped faces that fill the frame, which falls outside RetinaFace's anchor scales: unpadded it detects ~34-54% of frames vs MTCNN's 100%, purely as a configuration artifact. Padding is applied identically to both detectors."
+    ]
+  },
+  "detector_diagnostics": {
+    "retinaface": {
+      "videos_attempted": 1000,
+      "videos_kept": 1000,
+      "videos_failed": 0,
+      "silent_audio_videos": 0,
+      "mean_face_detection_rate_pct": 99.9,
+      "median_face_detection_rate_pct": 100.0,
+      "videos_below_30pct_detection": 1,
+      "mean_latency_ms_per_frame": 9.665324695408344,
+      "total_preprocess_minutes": 14.388940143585206,
+      "failure_examples": []
+    },
+    "mtcnn": {
+      "videos_attempted": 1000,
+      "videos_kept": 1000,
+      "videos_failed": 0,
+      "silent_audio_videos": 0,
+      "mean_face_detection_rate_pct": 99.91875,
+      "median_face_detection_rate_pct": 100.0,
+      "videos_below_30pct_detection": 1,
+      "mean_latency_ms_per_frame": 24.975207716226578,
+      "total_preprocess_minutes": 21.29993400971095,
+      "failure_examples": []
+    }
+  },
+  "results": {
+    "retinaface+ViT-16": {
+      "auc_mean": 93.96945573380867,
+      "auc_std": 1.0037876931951737,
+      "eer_mean": 9.106417112299464,
+      "eer_std": 1.4461339207084687,
+      "acc_mean": 91.29775113189712,
+      "acc_std": 0.628570101000366,
+      "f1_mean": 91.15023154227576,
+      "f1_std": 0.5913124447451268,
+      "folds": [
+        {
+          "auc": 94.28,
+          "eer": 10.999999999999998,
+          "acc": 92.0,
+          "f1": 91.75257731958763
+        },
+        {
+          "auc": 94.67647058823529,
+          "eer": 6.941176470588234,
+          "acc": 92.07920792079209,
+          "f1": 91.83673469387756
+        },
+        {
+          "auc": 95.28282828282828,
+          "eer": 10.050505050505048,
+          "acc": 90.95477386934674,
+          "f1": 90.81632653061224
+        },
+        {
+          "auc": 92.79797979797979,
+          "eer": 8.04040404040404,
+          "acc": 90.95477386934674,
+          "f1": 91.0891089108911
+        },
+        {
+          "auc": 92.80999999999999,
+          "eer": 9.499999999999998,
+          "acc": 90.5,
+          "f1": 90.25641025641026
+        }
+      ],
+      "n_samples": 1000,
+      "n_identities": 500
+    },
+    "retinaface+ViT-32": {
+      "auc_mean": 88.64071776589424,
+      "auc_std": 3.464734891474689,
+      "eer_mean": 16.319845513963163,
+      "eer_std": 3.892536463103465,
+      "acc_mean": 82.37306831185631,
+      "acc_std": 6.07179605494196,
+      "f1_mean": 80.04762367428188,
+      "f1_std": 9.006774086660764,
+      "folds": [
+        {
+          "auc": 91.75999999999999,
+          "eer": 14.500000000000002,
+          "acc": 86.0,
+          "f1": 84.78260869565217
+        },
+        {
+          "auc": 91.92156862745098,
+          "eer": 10.892156862745098,
+          "acc": 90.0990099009901,
+          "f1": 89.79591836734694
+        },
+        {
+          "auc": 87.74747474747475,
+          "eer": 19.095959595959595,
+          "acc": 81.4070351758794,
+          "f1": 81.21827411167513
+        },
+        {
+          "auc": 82.45454545454545,
+          "eer": 22.11111111111111,
+          "acc": 71.85929648241206,
+          "f1": 63.1578947368421
+        },
+        {
+          "auc": 89.32,
+          "eer": 15.000000000000002,
+          "acc": 82.5,
+          "f1": 81.28342245989305
+        }
+      ],
+      "n_samples": 1000,
+      "n_identities": 500
+    },
+    "retinaface+Swin-Tiny": {
+      "auc_mean": 93.27651812240046,
+      "auc_std": 0.469408587131669,
+      "eer_mean": 10.796672608437314,
+      "eer_std": 1.9755113822038841,
+      "acc_mean": 88.39964177322254,
+      "acc_std": 2.2790204430516363,
+      "f1_mean": 87.96290323283134,
+      "f1_std": 2.354075644015807,
+      "folds": [
+        {
+          "auc": 92.95,
+          "eer": 10.0,
+          "acc": 89.0,
+          "f1": 88.54166666666666
+        },
+        {
+          "auc": 93.1078431372549,
+          "eer": 11.38235294117647,
+          "acc": 88.11881188118812,
+          "f1": 87.75510204081633
+        },
+        {
+          "auc": 94.16161616161615,
+          "eer": 7.535353535353534,
+          "acc": 91.4572864321608,
+          "f1": 91.28205128205128
+        },
+        {
+          "auc": 93.31313131313131,
+          "eer": 11.565656565656566,
+          "acc": 84.42211055276381,
+          "f1": 83.93782383419689
+        },
+        {
+          "auc": 92.85,
+          "eer": 13.5,
+          "acc": 89.0,
+          "f1": 88.29787234042553
+        }
+      ],
+      "n_samples": 1000,
+      "n_identities": 500
+    },
+    "mtcnn+ViT-16": {
+      "auc_mean": 93.32962923351157,
+      "auc_std": 1.8596198768245653,
+      "eer_mean": 10.495662507427214,
+      "eer_std": 1.6971395220025982,
+      "acc_mean": 89.00364694760933,
+      "acc_std": 1.7067017844505012,
+      "f1_mean": 88.8303190828486,
+      "f1_std": 1.6972931083903577,
+      "folds": [
+        {
+          "auc": 95.91999999999999,
+          "eer": 8.999999999999998,
+          "acc": 91.5,
+          "f1": 91.09947643979058
+        },
+        {
+          "auc": 93.44117647058823,
+          "eer": 12.382352941176471,
+          "acc": 87.62376237623762,
+          "f1": 87.92270531400966
+        },
+        {
+          "auc": 94.58585858585859,
+          "eer": 8.04040404040404,
+          "acc": 90.45226130653266,
+          "f1": 90.25641025641026
+        },
+        {
+          "auc": 92.1111111111111,
+          "eer": 11.055555555555555,
+          "acc": 88.44221105527639,
+          "f1": 88.55721393034825
+        },
+        {
+          "auc": 90.58999999999999,
+          "eer": 12.0,
+          "acc": 87.0,
+          "f1": 86.31578947368422
+        }
+      ],
+      "n_samples": 1000,
+      "n_identities": 500
+    },
+    "mtcnn+ViT-32": {
+      "auc_mean": 83.5432834224599,
+      "auc_std": 4.974660217168182,
+      "eer_mean": 22.118181818181817,
+      "eer_std": 3.352484927370457,
+      "acc_mean": 76.2763620080601,
+      "acc_std": 4.735563631967357,
+      "f1_mean": 76.37949446854188,
+      "f1_std": 5.051312075146822,
+      "folds": [
+        {
+          "auc": 87.81000000000002,
+          "eer": 20.499999999999996,
+          "acc": 78.0,
+          "f1": 77.55102040816327
+        },
+        {
+          "auc": 90.42156862745098,
+          "eer": 17.333333333333336,
+          "acc": 82.67326732673267,
+          "f1": 83.56807511737088
+        },
+        {
+          "auc": 76.53535353535354,
+          "eer": 25.12121212121212,
+          "acc": 69.84924623115577,
+          "f1": 71.15384615384616
+        },
+        {
+          "auc": 80.94949494949493,
+          "eer": 26.636363636363637,
+          "acc": 71.85929648241206,
+          "f1": 70.2127659574468
+        },
+        {
+          "auc": 82.0,
+          "eer": 20.999999999999996,
+          "acc": 79.0,
+          "f1": 79.41176470588235
+        }
+      ],
+      "n_samples": 1000,
+      "n_identities": 500
+    },
+    "mtcnn+Swin-Tiny": {
+      "auc_mean": 90.46173677956031,
+      "auc_std": 2.50856693252897,
+      "eer_mean": 14.30089126559715,
+      "eer_std": 1.4680374403878984,
+      "acc_mean": 85.78913378775063,
+      "acc_std": 2.477287645851369,
+      "f1_mean": 85.18699457719455,
+      "f1_std": 2.1395683723533527,
+      "folds": [
+        {
+          "auc": 91.64999999999999,
+          "eer": 15.500000000000004,
+          "acc": 85.0,
+          "f1": 84.04255319148936
+        },
+        {
+          "auc": 93.41176470588236,
+          "eer": 13.35294117647059,
+          "acc": 89.60396039603961,
+          "f1": 88.88888888888889
+        },
+        {
+          "auc": 91.26262626262627,
+          "eer": 13.065656565656566,
+          "acc": 86.4321608040201,
+          "f1": 85.86387434554975
+        },
+        {
+          "auc": 85.92929292929293,
+          "eer": 16.58585858585859,
+          "acc": 81.90954773869346,
+          "f1": 82.52427184466019
+        },
+        {
+          "auc": 90.055,
+          "eer": 13.0,
+          "acc": 86.0,
+          "f1": 84.61538461538461
+        }
+      ],
+      "n_samples": 1000,
+      "n_identities": 500
+    }
+  }
+}
