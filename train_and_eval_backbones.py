@@ -60,7 +60,7 @@ def load_real_video_dataset():
     return video_items
 
 
-def extract_features_for_backbone(video_items, backbone_identifier, device, max_samples=40):
+def extract_features_for_backbone(video_items, backbone_identifier, device, max_samples=123):
     """Extract real features for a given backbone from real video files."""
     prep_cfg = PreprocessConfig(max_frames=32)
     preprocessor = PreprocessingPipeline(config=prep_cfg)
@@ -70,7 +70,7 @@ def extract_features_for_backbone(video_items, backbone_identifier, device, max_
 
     face_embeds, audio_embeds, labels = [], [], []
 
-    sample_batch = video_items[:max_samples]
+    sample_batch = video_items[:max_samples] if max_samples else video_items
     logger.info(f"Extracting authentic features from {len(sample_batch)} real video files for {backbone_identifier}...")
 
     start_time = time.time()
@@ -161,6 +161,7 @@ def train_and_eval_real_backbone(backbone_name, backbone_identifier, video_items
 
     fusion_model.train()
     for epoch in range(30):
+        total_loss = 0.0
         for a, f, m, y in tr_loader:
             a, f, m, y = a.to(device), f.to(device), m.to(device), y.to(device)
             optimizer.zero_grad()
@@ -168,6 +169,10 @@ def train_and_eval_real_backbone(backbone_name, backbone_identifier, video_items
             loss = criterion(logits, y)
             loss.backward()
             optimizer.step()
+            total_loss += loss.item() * len(y)
+        avg_loss = total_loss / len(tr_ds) if len(tr_ds) > 0 else 0.0
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            logger.info(f"[{backbone_name}] Epoch {epoch+1:02d}/30 | Loss: {avg_loss:.4f}")
 
     # Save Checkpoint
     ckpt_name = backbone_name.lower().replace("-", "_")
