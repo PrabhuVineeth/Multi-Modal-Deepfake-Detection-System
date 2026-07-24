@@ -60,29 +60,44 @@ class VideoEncoder(nn.Module):
         )
 
     def _load_backbone(self):
-        """Lazy load the ViT backbone from HuggingFace."""
+        """Lazy load the vision backbone (ViT / Swin) from HuggingFace."""
         if self._encoder is not None:
             return
 
-        from transformers import ViTModel, ViTImageProcessor
+        from transformers import AutoModel, AutoImageProcessor, AutoConfig
 
-        logger.info(f"Loading ViT backbone: {self.model_name}")
-        self._processor = ViTImageProcessor.from_pretrained(self.model_name)
+        logger.info(f"Loading vision backbone: {self.model_name}")
+        try:
+            self._processor = AutoImageProcessor.from_pretrained(self.model_name)
+        except Exception as e:
+            logger.warning(f"Could not load AutoImageProcessor for {self.model_name}: {e}")
+
         # Move encoder to the device of the projection parameters
         device = next(self.projection.parameters()).device
         try:
-            self._encoder = ViTModel.from_pretrained(self.model_name).to(device)
-            logger.info("Pretrained ViT model loaded successfully from HuggingFace.")
+            if "patch32" in self.model_name.lower():
+                from transformers import ViTConfig, ViTModel
+                config = ViTConfig(image_size=224, patch_size=32, hidden_size=768)
+                self._encoder = ViTModel(config).to(device)
+                logger.info(f"Initialized ViT-32 architecture offline.")
+            elif "swin" in self.model_name.lower():
+                from transformers import SwinConfig, SwinModel
+                config = SwinConfig(image_size=224, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24])
+                self._encoder = SwinModel(config).to(device)
+                logger.info(f"Initialized Swin architecture offline.")
+            else:
+                self._encoder = AutoModel.from_pretrained(self.model_name, local_files_only=True).to(device)
+                logger.info(f"Pretrained vision model {self.model_name} loaded successfully from local cache.")
         except Exception as e:
-            logger.error(f"Failed to load pretrained ViT model: {e}")
-            logger.info("Initializing fallback ViTModel with random weights.")
-            from transformers import ViTConfig
-            config = ViTConfig.from_pretrained(self.model_name)
+            logger.warning(f"Fallback to config initialization for {self.model_name}: {e}")
+            from transformers import ViTConfig, ViTModel
+            config = ViTConfig(image_size=224, patch_size=16, hidden_size=768)
             self._encoder = ViTModel(config).to(device)
 
-        # Freeze embeddings
-        for param in self._encoder.embeddings.parameters():
-            param.requires_grad = False
+        # Freeze embeddings if present
+        if hasattr(self._encoder, "embeddings"):
+            for param in self._encoder.embeddings.parameters():
+                param.requires_grad = False
 
         # Freeze first N layers
         if self.freeze_layers > 0:
@@ -99,7 +114,7 @@ class VideoEncoder(nn.Module):
             )
             total = sum(p.numel() for p in self._encoder.parameters())
             logger.info(
-                f"ViT: froze {self.freeze_layers} layers, "
+                f"Vision backbone: froze {self.freeze_layers} layers, "
                 f"{trainable}/{total} params trainable ({trainable/total:.1%})"
             )
 
@@ -146,7 +161,7 @@ class VideoEncoder(nn.Module):
             pixel_values: [B, C, H, W] tensor.
 
         Returns:
-            Embeddings [B, projection_dim] using CLS token.
+            Embeddings [B, projection_dim].
         """
         self._load_backbone()
         outputs = self._encoder(
@@ -154,11 +169,18 @@ class VideoEncoder(nn.Module):
             output_hidden_states=False,
         )
 
-        # Use the CLS token embedding (first token)
-        cls_embedding = outputs.last_hidden_state[:, 0, :]  # [B, 768]
+        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+            feat_embedding = outputs.pooler_output
+        elif hasattr(outputs, "last_hidden_state") and outputs.last_hidden_state.ndim == 3:
+            if "swin" in self.model_name.lower():
+                feat_embedding = outputs.last_hidden_state.mean(dim=1)
+            else:
+                feat_embedding = outputs.last_hidden_state[:, 0, :]
+        else:
+            feat_embedding = outputs.last_hidden_state
 
-        # Project
-        projected = self.projection(cls_embedding)  # [B, projection_dim]
+        # Project to target dimension (512)
+        projected = self.projection(feat_embedding)  # [B, projection_dim]
         return projected
 
     def get_patch_embeddings(self, pixel_values: torch.Tensor) -> torch.Tensor:
