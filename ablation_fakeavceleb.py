@@ -30,10 +30,16 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import random
 import time
-from collections import Counter
+
+# Must be set before the first CUDA/cuBLAS call for deterministic GEMMs; setting
+# it at import time guarantees that regardless of when the device is initialized.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import cv2
@@ -41,7 +47,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 from loguru import logger
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, roc_curve
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    roc_auc_score,
+    roc_curve,
+)
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -79,30 +91,85 @@ def identity_of(video_path: str) -> str:
     return m.group(1) if m else f"UNK::{Path(video_path).stem}"
 
 
-def load_balanced_samples(max_videos=None):
-    """Balanced real/fake subset, deterministic under SEED."""
+# The three fake sub-categories, in a fixed order so remainders are assigned
+# deterministically. lip-sync (RealVideo-FakeAudio) is the audio-only class and
+# the whole reason to stratify: an unstratified draw from the pooled 21,066 gives
+# it ~2.4% share, leaving the audio branch untestable.
+FAKE_TYPES = ["face-swap", "lip-sync", "both"]
+
+
+def load_samples(fake_total=500, stratify=True, max_videos=None):
+    """Real + fake subset, deterministic under SEED.
+
+    Args:
+        fake_total: number of fake videos (real is always the full 500).
+        stratify: draw fakes evenly across the three sub-categories rather than
+            proportionally from the pool. Equal split so the audio-only class is
+            represented; falls back to proportional if a category runs short.
+    """
     dataset = FakeAVCelebDataset(FAKEAVCELEB_ROOT, split="all")
     real = [s for s in dataset.samples if s.label == 0]
-    fake = [s for s in dataset.samples if s.label == 1]
-    logger.info(f"FakeAVCeleb full: {len(real)} real / {len(fake)} fake")
+    by_type = defaultdict(list)
+    for s in dataset.samples:
+        if s.label == 1:
+            by_type[s.manipulation_type].append(s)
+    logger.info(
+        f"FakeAVCeleb full: {len(real)} real / {sum(len(v) for v in by_type.values())} fake "
+        f"({ {t: len(by_type[t]) for t in FAKE_TYPES} })"
+    )
 
     rng = random.Random(SEED)
     rng.shuffle(real)
-    rng.shuffle(fake)
+    for t in FAKE_TYPES:
+        rng.shuffle(by_type[t])
 
-    per_class = min(len(real), len(fake), 500)
+    n_real = min(len(real), 500)
     if max_videos:
-        per_class = min(per_class, max_videos // 2)
+        n_real = min(n_real, max_videos // 2)
+        fake_total = min(fake_total, max_videos - n_real)
+    real_subset = real[:n_real]
 
-    combined = real[:per_class] + fake[:per_class]
+    if stratify:
+        # Even split, remainder to the first types; cap each by availability.
+        base, rem = divmod(fake_total, len(FAKE_TYPES))
+        want = {t: base + (1 if i < rem else 0) for i, t in enumerate(FAKE_TYPES)}
+        fake_subset = []
+        for t in FAKE_TYPES:
+            take = min(want[t], len(by_type[t]))
+            if take < want[t]:
+                logger.warning(f"{t}: wanted {want[t]} but only {len(by_type[t])} available")
+            fake_subset += by_type[t][:take]
+    else:
+        pool = [s for t in FAKE_TYPES for s in by_type[t]]
+        rng.shuffle(pool)
+        fake_subset = pool[:fake_total]
+
+    combined = real_subset + fake_subset
     rng.shuffle(combined)
 
+    got = Counter(s.manipulation_type for s in fake_subset)
     ids = {identity_of(s.video_path) for s in combined}
     logger.info(
-        f"Balanced subset: {len(combined)} videos "
-        f"({per_class} real / {per_class} fake), {len(ids)} unique identities"
+        f"Subset: {len(combined)} videos ({len(real_subset)} real / {len(fake_subset)} fake), "
+        f"{len(ids)} identities | fake by type: {dict(got)} | stratify={stratify}"
     )
     return combined
+
+
+def setup_determinism():
+    """Make the run reproducible. Two runs of an identical config previously
+    differed by ~1.09 AUC points; this removes that drift so between-cell gaps
+    can be read directly rather than only via effect size across repeats."""
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # warn_only: some vision ops (e.g. bilinear upsample backward) lack deterministic
+    # kernels; warn instead of crashing rather than losing the whole run.
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    logger.info("Determinism enabled (cudnn.deterministic, seeded, CUBLAS_WORKSPACE_CONFIG)")
 
 
 # ─────────────────────── feature extraction ───────────────────────
@@ -162,7 +229,7 @@ def build_detector_cache(detector, samples, device, detect_pad):
 
     face = {n: [] for n in BACKBONES}
     mouth = {n: [] for n in BACKBONES}
-    audio_feats, labels, idents = [], [], []
+    audio_feats, labels, idents, manips = [], [], [], []
     det_rates, latencies = [], []
     failures, silent_audio = [], 0
 
@@ -217,6 +284,7 @@ def build_detector_cache(detector, samples, device, detect_pad):
             audio_feats.append(a_vec)
             labels.append(sample.label)
             idents.append(identity_of(sample.video_path))
+            manips.append(sample.manipulation_type)
 
         except Exception as e:  # recorded, never silently swallowed
             failures.append((str(sample.video_path), f"{type(e).__name__}: {e}"))
@@ -237,6 +305,7 @@ def build_detector_cache(detector, samples, device, detect_pad):
         "audio": np.asarray(audio_feats, dtype=np.float32),
         "labels": np.asarray(labels, dtype=np.int64),
         "identities": np.asarray(idents),
+        "manip": np.asarray(manips),
         "diagnostics": {
             "videos_attempted": len(samples),
             "videos_kept": len(labels),
@@ -322,18 +391,23 @@ def run_fold(tr, te, epochs, device):
 
     scores, targets = np.asarray(scores), np.asarray(targets)
     preds = (scores >= 0.5).astype(int)
-    return {
+    metrics = {
         "auc": roc_auc_score(targets, scores) * 100.0,
         "eer": calculate_eer(targets, scores),
         "acc": accuracy_score(targets, preds) * 100.0,
+        # balanced accuracy is prevalence-robust; matters once real:fake != 1:1
+        "bal_acc": balanced_accuracy_score(targets, preds) * 100.0,
         "f1": f1_score(targets, preds, zero_division=0) * 100.0,
     }
+    # scores/targets returned separately (not JSON-dumped) for pooled per-category AUC
+    return metrics, scores, targets
 
 
 def evaluate_cell(cache, backbone, folds, epochs, device):
     """Identity-disjoint k-fold evaluation of one (detector, backbone) cell."""
     X_f, X_m, X_a = cache["face"][backbone], cache["mouth"][backbone], cache["audio"]
     y, groups = cache["labels"], cache["identities"]
+    manip = cache.get("manip")
 
     try:
         from sklearn.model_selection import StratifiedGroupKFold
@@ -344,26 +418,50 @@ def evaluate_cell(cache, backbone, folds, epochs, device):
         logger.warning("StratifiedGroupKFold unavailable; folds may be label-imbalanced")
 
     per_fold = []
+    pooled_scores, pooled_targets, pooled_manip = [], [], []
     for k, (tr_i, te_i) in enumerate(splitter.split(X_f, y, groups)):
         overlap = set(groups[tr_i]) & set(groups[te_i])
         assert not overlap, f"identity leak in fold {k}: {sorted(overlap)[:5]}"
         if len(np.unique(y[te_i])) < 2:
             logger.warning(f"fold {k} is single-class; skipped")
             continue
-        per_fold.append(run_fold(
+        metrics, sc, tg = run_fold(
             (X_a[tr_i], X_f[tr_i], X_m[tr_i], y[tr_i]),
             (X_a[te_i], X_f[te_i], X_m[te_i], y[te_i]),
             epochs, device,
-        ))
+        )
+        per_fold.append(metrics)
+        # te_loader has shuffle=False, so sc aligns with te_i order.
+        pooled_scores.append(sc)
+        pooled_targets.append(tg)
+        if manip is not None:
+            pooled_manip.append(manip[te_i])
 
     agg = {}
-    for metric in ("auc", "eer", "acc", "f1"):
+    for metric in ("auc", "eer", "acc", "bal_acc", "f1"):
         vals = [f[metric] for f in per_fold]
         agg[f"{metric}_mean"] = float(np.mean(vals))
         agg[f"{metric}_std"] = float(np.std(vals))
     agg["folds"] = per_fold
     agg["n_samples"] = int(len(y))
     agg["n_identities"] = int(len(set(groups)))
+
+    # Per-manipulation-type AUC: reals vs fakes of one type, pooled over folds
+    # (every video is tested exactly once, so this is one prediction per video).
+    # This is what makes the audio-only class interpretable.
+    if manip is not None and pooled_scores:
+        ps = np.concatenate(pooled_scores)
+        pt = np.concatenate(pooled_targets)
+        pm = np.concatenate(pooled_manip)
+        per_cat = {}
+        for c in FAKE_TYPES:
+            mask = (pt == 0) | (pm == c)
+            yt, ys = pt[mask], ps[mask]
+            n_fake = int((pm[mask] == c).sum())
+            entry = {"n_fake": n_fake, "n_real": int((yt == 0).sum())}
+            entry["auc"] = float(roc_auc_score(yt, ys) * 100.0) if (n_fake > 0 and len(np.unique(yt)) == 2) else None
+            per_cat[c] = entry
+        agg["per_category_auc"] = per_cat
     return agg
 
 
@@ -389,12 +487,12 @@ def print_tables(results, caches):
     print("\n" + "=" * 104)
     print("TABLE 2 - VISUAL BACKBONE ARM   (detector fixed: RetinaFace)")
     print("=" * 104)
-    print(f"{'Backbone':<12} | {'AUC%':<14} | {'EER%':<13} | {'Acc%':<14} | {'F1%':<14}")
+    print(f"{'Backbone':<12} | {'AUC%':<14} | {'EER%':<13} | {'BalAcc%':<14} | {'F1%':<14}")
     print("-" * 104)
     for bb in BACKBONES:
         r = cell("retinaface", bb)
         print(f"{bb:<12} | {r['auc_mean']:6.2f}+-{r['auc_std']:<5.2f} | "
-              f"{r['eer_mean']:5.2f}+-{r['eer_std']:<5.2f} | {r['acc_mean']:6.2f}+-{r['acc_std']:<5.2f} | "
+              f"{r['eer_mean']:5.2f}+-{r['eer_std']:<5.2f} | {r['bal_acc_mean']:6.2f}+-{r['bal_acc_std']:<5.2f} | "
               f"{r['f1_mean']:6.2f}+-{r['f1_std']:<5.2f}")
 
     print("\n" + "=" * 104)
@@ -405,6 +503,22 @@ def print_tables(results, caches):
     for det in DETECTORS:
         row = " | ".join(f"{cell(det,b)['auc_mean']:6.2f}+-{cell(det,b)['auc_std']:<5.2f}  " for b in BACKBONES)
         print(f"{det.upper():<12} | {row}")
+
+    # Per-manipulation-type AUC on the anchor cell. This is the point of the
+    # stratified draw: it separates whether the model catches audio-only forgeries
+    # (lip-sync, the modality the audio branch exists for) from video forgeries.
+    anchor = cell(ANCHOR[0], ANCHOR[1])
+    if anchor.get("per_category_auc"):
+        print("\n" + "=" * 104)
+        print(f"PER-MANIPULATION-TYPE AUC   (anchor cell {ANCHOR[0].upper()}+{ANCHOR[1]}, reals vs one fake type)")
+        print("=" * 104)
+        print(f"{'Manipulation':<26} | {'AUC%':<9} | {'#fake':<7} | {'#real':<7}")
+        print("-" * 104)
+        label = {"face-swap": "face-swap (video)", "lip-sync": "lip-sync (AUDIO-only)", "both": "both"}
+        for c in FAKE_TYPES:
+            e = anchor["per_category_auc"][c]
+            auc = f"{e['auc']:6.2f}" if e["auc"] is not None else "  n/a "
+            print(f"{label[c]:<26} | {auc}   | {e['n_fake']:<7} | {e['n_real']:<7}")
     print("=" * 104)
     print(f"\nAnchor cell (deployed system): {ANCHOR[0].upper()} + {ANCHOR[1]}")
     print("Protocol: frozen pretrained backbones, trainable fusion head,")
@@ -420,18 +534,25 @@ def main():
                     help="pre-detection frame padding ratio; applied identically to "
                          "both detectors. 0.5 measured to lift RetinaFace from 54%% "
                          "to 100%% frame detection on FakeAVCeleb's 224x224 crops")
-    ap.add_argument("--out", type=str, default="output/ablation_fakeavceleb")
+    ap.add_argument("--fake-total", type=int, default=500,
+                    help="number of fake videos; real is always the full 500. "
+                         "500 keeps a 1:1 balance (167/167/166 across fake types); "
+                         "1500 gives 500/500/500 at the cost of 1:3 imbalance.")
+    ap.add_argument("--no-stratify", action="store_true",
+                    help="draw fakes proportionally from the pool instead of evenly "
+                         "across the three types (leaves audio-only at ~2.4%%)")
+    ap.add_argument("--out", type=str, default="output/ablation_fakeavceleb_stratified")
     args = ap.parse_args()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = get_device()
 
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
+    setup_determinism()
 
-    samples = load_balanced_samples(args.max_videos)
+    samples = load_samples(
+        fake_total=args.fake_total, stratify=not args.no_stratify, max_videos=args.max_videos
+    )
 
     caches = {}
     for det in DETECTORS:
@@ -439,7 +560,7 @@ def main():
         np.savez_compressed(
             out_dir / f"features_{det}.npz",
             audio=caches[det]["audio"], labels=caches[det]["labels"],
-            identities=caches[det]["identities"],
+            identities=caches[det]["identities"], manip=caches[det]["manip"],
             **{f"face_{n}": v for n, v in caches[det]["face"].items()},
             **{f"mouth_{n}": v for n, v in caches[det]["mouth"].items()},
         )
@@ -459,7 +580,11 @@ def main():
             "folds": args.folds,
             "epochs": args.epochs,
             "seed": SEED,
+            "deterministic": True,
             "detect_pad_ratio": args.detect_pad,
+            "fake_total": args.fake_total,
+            "stratified_fakes": not args.no_stratify,
+            "real_fake_ratio": f"500:{args.fake_total}",
             "backbones": BACKBONES,
             "detectors": DETECTORS,
             "anchor_cell": f"{ANCHOR[0]}+{ANCHOR[1]}",
@@ -475,6 +600,12 @@ def main():
                 "which falls outside RetinaFace's anchor scales: unpadded it detects "
                 "~34-54% of frames vs MTCNN's 100%, purely as a configuration "
                 "artifact. Padding is applied identically to both detectors.",
+                f"Fakes drawn {'evenly across' if not args.no_stratify else 'proportionally from'} "
+                "the three sub-categories (face-swap / lip-sync / both). Stratifying lifts "
+                "the audio-only (lip-sync) class from ~2.4% to a testable share; see "
+                "per_category_auc for the audio-branch result.",
+                "All videos span the same 500 identities regardless of count, so more "
+                "videos add coverage, not statistical power.",
             ],
         },
         "detector_diagnostics": {d: caches[d]["diagnostics"] for d in DETECTORS},

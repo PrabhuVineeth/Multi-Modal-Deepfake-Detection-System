@@ -43,6 +43,7 @@ def load_cache(path: Path, detector: str):
         "audio": z["audio"],
         "labels": z["labels"],
         "identities": z["identities"],
+        "manip": z["manip"] if "manip" in z.files else None,  # older caches lack it
         "diagnostics": None,  # only written to the final JSON by the main runner
     }
 
