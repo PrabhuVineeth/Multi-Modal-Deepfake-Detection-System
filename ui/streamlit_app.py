@@ -960,16 +960,16 @@ def run_analysis(uploaded_file, dataset: Optional[str], config: dict, generate_h
             tmp.write(uploaded_file.getvalue())
             temp_path = tmp.name
 
-        progress.progress(15, "Loading routed model")
-        from models.inference.pipeline import ForensicInferencePipeline
+        progress.progress(15, "Loading late-fusion model")
+        # The full DeepfakeForensicModel checkpoints on disk are degenerate
+        # (undertrained epoch-1/2, collapsed to one class -> best_model.pth predicts
+        # FAKE for everything) and the working general checkpoint was deleted. Use the
+        # validated late-fusion head instead (92.6% AUC, identity-disjoint on FakeAVCeleb).
+        from models.inference.latefusion_pipeline import LateFusionInferencePipeline
         from config import path_config
 
-        pipeline = ForensicInferencePipeline()
-        if dataset:
-            pipeline.load_model(dataset=dataset)
-        else:
-            checkpoint = path_config.best_model_path
-            pipeline.load_model(str(checkpoint) if checkpoint and Path(str(checkpoint)).exists() else None)
+        pipeline = LateFusionInferencePipeline()
+        pipeline.load_model()
 
         progress.progress(35, "Preprocessing media")
         output_dir = path_config.report_dir / f"web_demo_{int(time.time())}"

@@ -86,28 +86,13 @@ Examples:
 
     start_time = time.time()
 
-    # Initialize pipeline
-    from models.inference.pipeline import ForensicInferencePipeline
-    from config import InferenceConfig
+    # Initialize pipeline. The full DeepfakeForensicModel checkpoints are degenerate
+    # (undertrained, collapsed to one class); use the validated late-fusion head.
+    from models.inference.latefusion_pipeline import LateFusionInferencePipeline
 
-    inf_config = InferenceConfig(
-        confidence_threshold=args.threshold,
-        device=args.device,
-    )
-    pipeline = ForensicInferencePipeline(inference_cfg=inf_config)
-
-    # Load model
-    checkpoint = args.checkpoint
-    if checkpoint is None:
-        # Auto-detect
-        best_path = path_config.checkpoint_dir / "best_model.pth"
-        if best_path.exists():
-            checkpoint = str(best_path)
-            print(f"  Using checkpoint: {checkpoint}")
-        else:
-            print("  [WARNING] No checkpoint found — using untrained model")
-            print("    Results will be random. Train a model first.")
-            print()
+    pipeline = LateFusionInferencePipeline()
+    checkpoint = args.checkpoint  # ignored by the late-fusion head, kept for CLI compat
+    print("  Using validated late-fusion head (checkpoints/latefusion_head.pt)")
 
     pipeline.load_model(checkpoint, dataset=args.dataset)
 

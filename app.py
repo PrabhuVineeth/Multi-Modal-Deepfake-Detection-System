@@ -86,19 +86,12 @@ async def startup():
     logger.info("Starting Deepfake Forensic API...")
 
     try:
-        from models.inference.pipeline import ForensicInferencePipeline
-        _pipeline = ForensicInferencePipeline()
-
-        # Check for checkpoint
-        checkpoint = path_config.best_model_path
-        if checkpoint and Path(checkpoint).exists():
-            _pipeline.load_model(str(checkpoint))
-        else:
-            logger.warning(
-                "No checkpoint found. Loading fresh model (untrained). "
-                "Set path_config.best_model_path to use a trained model."
-            )
-            _pipeline.load_model(None)
+        # The full DeepfakeForensicModel checkpoints are degenerate (undertrained,
+        # collapsed to one class) and the working general checkpoint was deleted.
+        # Use the validated late-fusion head (92.6% AUC, identity-disjoint) instead.
+        from models.inference.latefusion_pipeline import LateFusionInferencePipeline
+        _pipeline = LateFusionInferencePipeline()
+        _pipeline.load_model()
 
         logger.info("API ready for requests")
     except Exception as e:

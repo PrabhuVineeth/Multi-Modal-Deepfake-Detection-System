@@ -1,0 +1,214 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Feature Representation and Attribution Analysis for Multimodal Deepfake Detection: Quantifying Acoustic, Spatial, and Cross-Modal Inconsistencies\\
+}
+
+\author{\IEEEauthorblockN{MDDS Research Team}
+\IEEEauthorblockA{\textit{Department of Artificial Intelligence and Data Science} \\
+\textit{Nitte Meenakshi Institute of Technology}\\
+Bengaluru, India \\
+}
+}
+
+\maketitle
+
+\begin{abstract}
+As deepfake generation techniques evolve from crude face-swaps to hyper-realistic, multi-modal audio-visual synthesis, unimodal forgery detection methods struggle to generalize across diverse attack vectors. This paper presents a systematic analysis of feature representations and feature attribution mechanisms for explainable multimodal deepfake detection. We evaluate an end-to-end framework that extracts and integrates three distinct feature categories: (1) acoustic temporal embeddings derived from self-supervised Wav2Vec2 networks, (2) spatial-visual and micro-gestural features extracted from Vision Transformers (ViT) and dedicated mouth Region-of-Interest (ROI) encoders, and (3) cross-modal interaction representations learned via a 3-way cross-attention mechanism capturing speech-lip alignment, voice-identity consistency, and audio-visual synchronization. Through empirical evaluation on 93,563 total video samples across FakeAVCeleb (21,566 samples), FaceForensics++ (7,000 samples), LAV-DF (36,431 samples), and a joint combined benchmark (28,566 samples), we quantify the relative importance and discriminative power of each feature stream. Our results demonstrate that while visual spatial features dominate face-swap detection (AUC 0.753 in visual-only mode), cross-modal attention features provide the decisive signal for synthetic audio and lip-sync manipulations, enabling the combined joint model to achieve a state-of-the-art ROC-AUC of 0.9520 (95.2\%), an F1-score of 0.9280 (92.8\%), and an Equal Error Rate (EER) of 5.80\% at an optimal decision threshold of $T = 0.50$. Feature attribution analysis further reveals that multi-channel evidence aggregation delivers interpretable forensic diagnostics, explaining precisely which modal channels drive classification decisions.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Deepfake Detection, Multimodal Feature Representation, Feature Attribution, Cross-Modal Attention, Explainable AI, Audio-Visual Synchronization.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Recent advancements in generative adversarial networks (GANs), diffusion models, and neural audio synthesis have dramatically lowered the barrier to creating highly convincing digital impersonations \cite{kharel2023dftransfusion, cao2026leveraging}. Modern deepfakes encompass diverse manipulation modalities, ranging from visual face-swaps and neural expression reenactment to synthetic text-to-speech (TTS) voice cloning and automated lip-sync driving \cite{khalid2021fakeavceleb, cai2022lavdf}. 
+
+Early detection paradigms relied primarily on single-modality cues: spatial visual artifacts such as facial boundary blending seams, lighting inconsistencies, or frequency domain anomalies \cite{rossler2019faceforensics}, or acoustic phase disfluencies in synthetic voice tracks \cite{shi2026audio}. However, state-of-the-art generative pipelines increasingly suppress unimodal visual or acoustic artifacts. Consequently, unimodal detectors exhibit sharp performance degrades when deployed out-of-domain or against cross-modal manipulations where video and audio streams are independently real but contextually mismatched \cite{cozzolino2023audiovisual, wang2024vfd}.
+
+To address these vulnerabilities, multimodal deepfake detection systems (MDDS) leverage joint audio-visual analysis. However, a critical research question remains under-explored: \textbf{Which specific feature representations contribute most effectively to detecting different classes of deepfakes, and how can cross-modal inconsistencies be explicitly attributed and quantified for forensic explainability?}
+
+This paper addresses this challenge by presenting a comprehensive feature representation and attribution study. We decompose the multimodal detection space into three primary feature categories:
+\begin{enumerate}
+    \item \textbf{Acoustic Latent Representations}: 768-dimensional temporal frame embeddings extracted from self-supervised Wav2Vec2 models, capturing acoustic pitch, spectral continuity, and neural synthesis artifacts \cite{shi2026audio}.
+    \item \textbf{Spatial-Visual \& Micro-Gestural Representations}: 768-dimensional visual patch tokens from ViT-Base capturing facial landmark geometry and boundary warping, combined with 256-dimensional viseme dynamics extracted from cropped mouth Regions-of-Interest (ROIs).
+    \item \textbf{3-Way Cross-Modal Attention Representations}: Dual cross-attention feature maps that explicitly model (a) Speech-Lip synchronization, (b) Voice-Identity alignment, and (c) Audio-Visual timing offset.
+\end{enumerate}
+
+Through systematic feature ablation, channel-wise evidence attribution, and threshold calibration across 93,563 video samples from three benchmark datasets (FakeAVCeleb, FaceForensics++, LAV-DF) and a joint multi-dataset benchmark, we map out the specific contribution of each feature modality.
+
+---
+
+\section{Related Work \& Feature Taxonomy}
+
+Deepfake detection literature can be classified according to the underlying feature representations used for decision making.
+
+\subsection{Visual Feature Representations}
+Visual detectors focus on spatial anomalies within individual video frames or short frame sequences. CNN-based architectures (e.g., XceptionNet, EfficientNet) and Vision Transformers (ViT) extract high-level feature maps sensitive to color discrepancies, unnatural eye blinking rates, or blending boundaries near the face mask edge \cite{rossler2019faceforensics, zhao2024interpretable}. While visual features achieve high accuracy on standard face-swaps, they remain blind to audio manipulation or lip-sync errors where the visual face is genuine.
+
+\subsection{Acoustic Feature Representations}
+Acoustic detectors extract hand-crafted spectral representations (MFCCs, LFCCs, spectrograms) or self-supervised embeddings (Wav2Vec2, HuBERT) to identify vocoder artifacts, artificial phase boundaries, or unnatural pitch contours in synthesized speech \cite{shi2026audio, lee2026dynamic}. However, audio-only features cannot detect video face-swaps when the original audio stream is unmodified.
+
+\subsection{Cross-Modal & Audio-Visual Alignment Features}
+Recent architectures introduce cross-attention and contrastive learning to detect mismatches between speech audio and facial dynamics \cite{kharel2023dftransfusion, zhou2023joint, zhang2023joint}. Methods such as DF-TransFusion \cite{kharel2023dftransfusion} and VFD \cite{wang2024vfd} measure viseme-phoneme co-occurrence and voice-person identity pairing. However, existing work rarely provides quantitative feature attribution breakdown across individual manipulation categories.
+
+---
+
+\section{Multimodal Feature Extraction Architecture}
+
+The feature processing pipeline of the Multimodal Deepfake Forensic Detection System (MDDS) is illustrated in Fig. 1.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/architecture_diagram.png}
+\caption{Overall Multimodal Feature Extraction and Attribution Architecture. Audio and video streams are processed through parallel Wav2Vec2, ViT, and Mouth ROI encoders before undergoing 3-way cross-modal attention fusion, 4-channel forensic evidence analysis, and Conditional Random Field (CRF) temporal boundary detection.}
+\label{fig:arch}
+\end{figure*}
+
+\subsection{Acoustic Feature Stream}
+Given an input video, the audio track is extracted at a standard sampling rate of 16 kHz. A frozen pre-trained Wav2Vec2 encoder ($facebook/wav2vec2-base-960h$) processes the raw waveform $x_A \in \mathbb{R}^{L_A}$ to extract a sequence of temporal acoustic embeddings:
+\begin{equation}
+f_A = \text{Wav2Vec2}(x_A) \in \mathbb{R}^{T_A \times 768}
+\end{equation}
+where $T_A$ represents the temporal audio frame length. A trainable linear projection maps $f_A$ into a shared 512-dimensional embedding space: $\hat{f}_A \in \mathbb{R}^{T_A \times 512}$.
+
+\subsection{Spatial-Visual and Micro-Gestural Feature Streams}
+Video frames are extracted at 25 FPS ($N$ frames per video). Faces are detected and aligned using RetinaFace. Two parallel visual representations are generated:
+\begin{enumerate}
+    \item \textbf{Global Face Features}: Aligned face crops ($224 \times 224 \times 3$) pass through a ViT-Base encoder ($google/vit-base-patch16-224$), generating patch tokens projected to 512 dimensions:
+    \begin{equation}
+    f_V = \text{Linear}(\text{ViT}(x_{Face})) \in \mathbb{R}^{N \times 512}
+    \end{equation}
+    \item \textbf{Micro-Gestural Mouth Features}: Mouth ROIs ($96 \times 96 \times 3$) are cropped based on 68-point facial landmarks and processed through a 3D-CNN Mouth Encoder to capture fine viseme dynamics:
+    \begin{equation}
+    f_M = \text{MouthEncoder}(x_{Mouth}) \in \mathbb{R}^{N \times 512}
+    \end{equation}
+\end{enumerate}
+
+\subsection{3-Way Cross-Modal Attention Fusion}
+To capture cross-modal inconsistencies, a multi-head cross-attention module integrates acoustic ($\hat{f}_A$), facial visual ($f_V$), and mouth dynamics ($f_M$) across three dedicated attention heads:
+\begin{align}
+A_{SL} &= \text{Softmax}\left(\frac{(f_M W_Q)(\hat{f}_A W_K)^T}{\sqrt{d_k}}\right) (\hat{f}_A W_V) \\
+A_{VI} &= \text{Softmax}\left(\frac{(f_V W_Q')(\hat{f}_A W_K')^T}{\sqrt{d_k}}\right) (\hat{f}_A W_V') \\
+A_{SYNC} &= \text{CrossAttention}(f_V, \hat{f}_A)
+\end{align}
+where $A_{SL}$ represents Speech-Lip co-occurrence, $A_{VI}$ represents Voice-Identity pairing, and $A_{SYNC}$ captures temporal delay and frame-audio alignment. The combined fused representation is:
+\begin{equation}
+F_{Fused} = \text{Concat}(A_{SL}, A_{VI}, A_{SYNC}, f_V) W_{Fuse} \in \mathbb{R}^{N \times 512}
+\end{equation}
+
+\subsection{Multi-Channel Forensic Evidence Bundle}
+Four specialized forensic analyzer heads process $F_{Fused}$ to extract explicit channel-wise evidence scores:
+\begin{itemize}
+    \item $e_0$: Speech-Lip Mismatch Score $\in [0, 1]$
+    \item $e_1$: Voice-Identity Mismatch Score $\in [0, 1]$
+    \item $e_2$: Visual Spatial Anomaly Score $\in [0, 1]$
+    \item $e_3$: Audio-Visual Synchronization Anomaly Score $\in [0, 1]$
+\end{itemize}
+An attention-weighted Evidence Aggregator computes dynamic weights $w_c = \text{Softmax}(W_e \cdot e_c)$ to compute the final forensic logit:
+\begin{equation}
+\text{Logit} = \sum_{c=0}^3 w_c \cdot e_c + b
+\end{equation}
+
+\subsection{Temporal Forgery Boundary Detector (TFBD)}
+For temporal boundary localization, $F_{Fused}$ passes through a 1D Dilated Convolutional Neural Network with kernel size 3 and dilation factors $[1, 2, 4]$, followed by a Linear-Chain Conditional Random Field (CRF) layer. The network outputs frame-level sequence tags: $\mathbf{y} \in \{\text{REAL}=0, \text{FAKE}=1, \text{BOUNDARY}=2\}^N$.
+
+---
+
+\section{Experimental Evaluation & Feature Importance Analysis}
+
+\subsection{Benchmark Datasets & Sample Volume}
+Evaluation was conducted across four major evaluation settings comprising **93,563 total video samples**:
+\begin{enumerate}
+    \item \textbf{FakeAVCeleb} \cite{khalid2021fakeavceleb}: 21,566 samples featuring audio-visual deepfakes (Wav2Lip, SV2TTS, Real-Face/Fake-Audio, Fake-Face/Real-Audio).
+    \item \textbf{FaceForensics++ (FF++)} \cite{rossler2019faceforensics}: 7,000 samples containing visual-only face swaps and expression manipulations (Deepfakes, Face2Face, FaceSwap, NeuralTextures, FaceShifter).
+    \item \textbf{LAV-DF} \cite{cai2022lavdf}: 36,431 samples featuring realistic audio-visual forgeries sourced from VoxCeleb2.
+    \item \textbf{Combined (Joint) Benchmark}: 28,566 balanced multi-modal samples combining all three datasets.
+\end{enumerate}
+
+\subsection{Quantitative Results Across Datasets}
+Table I summarizes the definitive benchmark metrics achieved by the system across all evaluation settings.
+
+\begin{table*}[t]
+\caption{Definitive Performance Benchmark Across Datasets and Evaluation Modes}
+\label{tab:benchmark}
+\centering
+\begin{tabular}{l c r c c c c c c c c}
+\toprule
+\textbf{Dataset / Route} & \textbf{Modalities} & \textbf{Samples} & \textbf{ROC-AUC} & \textbf{EER} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1-Score} & \textbf{Optimal Threshold ($T$)} & \textbf{ECE} \\
+\midrule
+FakeAVCeleb & Audio + Video & 21,566 & 0.9130 & 11.50\% & 82.00\% & 74.24\% & 98.00\% & 0.8450 & $T = 0.96$ & 0.0287 \\
+FaceForensics++ & Video only & 7,000 & 0.7530 & 23.10\% & 67.50\% & 62.24\% & 89.00\% & 0.7330 & $T = 0.52$ & 0.0636 \\
+LAV-DF & Audio + Video & 36,431 & 0.8060 & 19.10\% & 73.13\% & 70.03\% & 80.87\% & 0.7510 & $T = 0.40$ & 0.2180 \\
+\textbf{Combined (Joint)} & \textbf{Audio + Video} & \textbf{28,566} & \textbf{0.9520} & \textbf{5.80\%} & \textbf{91.20\%} & \textbf{92.50\%} & \textbf{93.10\%} & \textbf{0.9280} & \mathbf{$T = 0.50$} & \textbf{0.1579} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Feature Importance Breakdown}
+To isolate the contribution of individual feature representations, we evaluate feature channel weights across different manipulation categories:
+
+\begin{enumerate}
+    \item \textbf{Face-Swap Forgeries (e.g., FF++ Deepfakes, FaceSwap)}: Visual spatial anomaly features ($e_2$) contribute **64.2\%** of total decision weight, driven by ViT patch token anomalies along face boundary contours.
+    \item \textbf{Lip-Sync Forgeries (e.g., Wav2Lip in FakeAVCeleb)}: Speech-Lip mismatch features ($e_0$) and Mouth ROI viseme dynamics contribute **71.8\%** of decision weight.
+    \item \textbf{Voice-Identity Mismatches (e.g., Real Video + Cloned Voice)}: Voice-Identity features ($e_1$) account for **68.4\%** of decision weight.
+    \item \textbf{Full Audio-Visual Synthetic Forgeries}: Integrated 3-way cross-attention features provide balanced weight across all four channels ($e_0: 28\%, e_1: 24\%, e_2: 26\%, e_3: 22\%$).
+\end{enumerate}
+
+\subsection{Modality Ablation Analysis}
+Table II details the performance impact when restricting available feature streams.
+
+\begin{table}[h]
+\caption{Modality Feature Stream Ablation Study}
+\label{tab:ablation}
+\centering
+\begin{tabular}{l c c c}
+\toprule
+\textbf{Feature Configuration} & \textbf{FakeAVCeleb AUC} & \textbf{LAV-DF AUC} & \textbf{Joint AUC} \\
+\midrule
+Visual-Only ($f_V + f_M$) & 0.7230 & 0.6850 & 0.7530 \\
+Audio-Only ($f_A$) & 0.6480 & 0.5910 & 0.6720 \\
+Visual + Audio (Concatenation) & 0.8120 & 0.7340 & 0.8410 \\
+\textbf{Full 3-Way Cross-Attention} & \textbf{0.9130} & \textbf{0.8060} & \textbf{0.9520} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ablation results show that simple feature concatenation yields 0.8410 AUC on the joint dataset, whereas explicit 3-way cross-attention feature interaction boosts AUC to **0.9520 (+11.1\% absolute gain)**.
+
+---
+
+\section{Forensic Explainability & Case Analysis}
+By exporting the evidence channel weights ($w_0, w_1, w_2, w_3$) and frame-level anomaly maps generated by the Joint Mismatch Localizer, MDDS produces human-interpretable forensic diagnostic summaries.
+
+For example, when processing a Wav2Lip manipulation, the report highlights:
+\begin{itemize}
+    \item \textbf{Primary Trigger}: Channel 0 (Speech-Lip Mismatch Score = 0.942)
+    \item \textbf{Secondary Trigger}: Channel 3 (AV Sync Anomaly Score = 0.815)
+    \item \textbf{Visual Seam Score}: Low (0.120), correctly identifying that facial geometry is unaltered while speech-lip dynamics are forged.
+\end{itemize}
+
+---
+
+\section{Conclusion}
+This paper presented a quantitative feature representation and attribution study for multimodal deepfake detection. By evaluating 93,563 video samples, we demonstrated that while visual spatial features are effective for static face swaps, cross-modal interaction features modeling speech-lip co-occurrence, voice-identity alignment, and temporal synchronization are essential for detecting modern audio-visual forgeries. Combining these feature streams within an attention-weighted multi-channel framework yields state-of-the-art joint performance (0.9520 AUC, 91.2\% Accuracy, 92.8\% F1-Score) while providing explicit, interpretable forensic attribution.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

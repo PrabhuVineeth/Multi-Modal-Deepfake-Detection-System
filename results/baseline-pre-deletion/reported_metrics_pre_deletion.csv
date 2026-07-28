@@ -1,0 +1,5 @@
+dataset,evaluation_mode,optimal_threshold,roc_auc,eer_pct,accuracy_pct,precision_pct,recall_pct,f1_pct,ece,status
+FakeAVCeleb,Audio-Visual,0.96,0.9130,11.50,82.00,74.24,98.00,84.48,0.0287,reported-pre-deletion-not-reproducible
+FaceForensics++,Visual-Only,0.52,0.7530,23.10,67.50,62.24,89.00,73.25,0.0636,reported-pre-deletion-not-reproducible
+LAV-DF,Audio-Visual,0.40,0.8060,19.10,73.13,70.03,80.87,75.06,0.2180,reported-pre-deletion-not-reproducible
+Joint (Combined),Audio-Visual,0.50,0.9520,5.80,91.20,92.50,93.10,92.80,0.1579,reported-pre-deletion-conflicts-presentation-0.8610
